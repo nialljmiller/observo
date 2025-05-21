@@ -51,3 +51,7 @@
 2025-05-19 08:37:06 | DAILY_SUMMARY | SENT | Daily summary report for 2025-05-19
 2025-05-19 20:37:44 | DAILY_SUMMARY | SENT | Daily summary report for 2025-05-19
 2025-05-20 08:38:27 | DAILY_SUMMARY | SENT | Daily summary report for 2025-05-20
+2025-05-20 19:38:53 | PLANT_DATA_AGE | SENT | PLANT DATA AGE ALERT: Plant station data file is 1.37 hours old.
+2025-05-20 20:39:01 | PLANT_DATA_AGE | SENT | PLANT DATA AGE ALERT: Plant station data file is 2.37 hours old.
+2025-05-20 20:39:53 | DAILY_SUMMARY | SENT | Daily summary report for 2025-05-20
+2025-05-20 21:40:01 | PLANT_DATA_AGE | SENT | PLANT DATA AGE ALERT: Plant station data file is 3.38 hours old.
