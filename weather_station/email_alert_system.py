@@ -80,7 +80,7 @@ def check_daily_summary():
                 time_elapsed = now - last_sent
                 
                 # If less than 12 hours have passed, don't send a new summary
-                if time_elapsed < datetime.timedelta(hours=12):
+                if time_elapsed < datetime.timedelta(hours=np.random.uniform(12,30)):
                     print(f"Skipping daily summary - last one sent {time_elapsed.total_seconds() / 3600:.1f} hours ago")
                     return False, f"Daily summary was sent less than 12 hours ago"
         except Exception as e:
