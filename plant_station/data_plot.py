@@ -81,6 +81,10 @@ def smooth_data(df, x_col, y_col, num_bins=100):
     return smoothed
 
 
+
+
+
+
 def plot_with_gaps(ax, x, y, gap_threshold=timedelta(hours=24), **kwargs):
     """
     Plot line segments on ax.
@@ -112,8 +116,13 @@ def plot_with_gaps(ax, x, y, gap_threshold=timedelta(hours=24), **kwargs):
     if len(seg_x) > 1:
         ax.plot(seg_x, seg_y, **kwargs)
 
-def plot_gradient_line_with_gaps(ax, x, y, gap_threshold=timedelta(hours=24),
-                                 cmap=plt.get_cmap('viridis'),
+
+
+
+
+
+def  plot_gradient_line_with_gaps(ax, x, y, gap_threshold=timedelta(hours=24),
+                                  cmap=plt.get_cmap('viridis'),
                                  norm=plt.Normalize(0, 1),
                                  linewidth=2, alpha=0.8):
     """
@@ -482,7 +491,7 @@ output_gif = "/media/bigdata/plant_station/3d_plant_data.gif"
 
 if is_file_older_than(output_gif, 24):
     try:
-        create_3d_gif(hours=876000, output_gif=output_gif)
+        create_3d_gif(hours=8760000, output_gif=output_gif)
     except:
         pass
 else:
