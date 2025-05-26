@@ -3,6 +3,7 @@ import os
 import shutil
 import glob
 from datetime import datetime
+from PIL import Image    # ← install pillow if you haven’t already
 
 # File paths
 plant_data_file = "/media/bigdata/plant_station/plant_data.csv"
@@ -13,26 +14,35 @@ latest_image_path = os.path.join(images_dir, "latest.jpg")
 
 def save_latest_image():
     """
-    Finds the most recent image in the images directory and
-    copies it to images/latest.jpg.
+    Finds the most recent image in the images directory,
+    rotates it 180°, and saves it to images/latest.jpg.
     """
-    # Get all jpg files in the images directory
-    image_files = glob.glob(os.path.join(images_dir, "*.jpg"))
-    
-    # Filter out 'latest.jpg' itself to avoid copying it to itself
-    image_files = [f for f in image_files if os.path.basename(f) != "latest.jpg"]
-    
+    # Get all jpg files in the images directory (excluding the existing latest.jpg)
+    image_files = [f for f in glob.glob(os.path.join(images_dir, "*.jpg"))
+                   if os.path.basename(f) != "latest.jpg"]
+
     if not image_files:
         print("No image files found in the images directory.")
         return False
-    
-    # Find the most recent file based on modification time
+
+    # Pick the newest
     latest_file = max(image_files, key=os.path.getmtime)
-    
-    # Copy the file
+
+    # Copy it first
     shutil.copy2(latest_file, latest_image_path)
-    print(f"Copied {latest_file} to {latest_image_path}")
+
+    # Now rotate in place
+    try:
+        with Image.open(latest_image_path) as img:
+            rotated = img.rotate(180, expand=True)
+            rotated.save(latest_image_path)
+    except Exception as e:
+        print(f"Error rotating image: {e}")
+        return False
+
+    print(f"Copied and rotated {latest_file} → {latest_image_path}")
     return True
+
 
 def append_new_data():
     # Ensure the plant data file exists
