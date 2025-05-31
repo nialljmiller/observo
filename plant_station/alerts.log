@@ -249,3 +249,6 @@
 2025-05-30 15:22:24 | PLANT_DATA_AGE | SENT | PLANT DATA AGE ALERT: Plant station data file is 53.76 hours old.
 2025-05-30 16:22:29 | PLANT_DATA_AGE | SENT | PLANT DATA AGE ALERT: Plant station data file is 54.76 hours old.
 2025-05-30 17:22:35 | PLANT_DATA_AGE | SENT | PLANT DATA AGE ALERT: Plant station data file is 55.76 hours old.
+2025-05-31 10:23:08 | HIGH_TEMP | SENT | HIGH TEMPERATURE ALERT: Plant station recorded 44.0°C at 2025-05-31 16:20:46.255034
+2025-05-31 11:23:14 | HIGH_TEMP | SENT | HIGH TEMPERATURE ALERT: Plant station recorded 50.5°C at 2025-05-31 17:21:36.714969
+2025-05-31 11:23:38 | DAILY_SUMMARY | SENT | Daily summary report for 2025-05-31
