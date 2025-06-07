@@ -494,3 +494,7 @@
 2025-06-07 08:46:45 | WEATHER_DATA_AGE | SENT | WEATHER DATA AGE ALERT: Weather station data file is 79.44 hours old.
 2025-06-07 09:46:52 | PLANT_DATA_AGE | SENT | PLANT DATA AGE ALERT: Plant station data file is 122.86 hours old.
 2025-06-07 09:46:55 | WEATHER_DATA_AGE | SENT | WEATHER DATA AGE ALERT: Weather station data file is 80.44 hours old.
+2025-06-07 10:47:03 | PLANT_DATA_AGE | SENT | PLANT DATA AGE ALERT: Plant station data file is 123.86 hours old.
+2025-06-07 10:47:07 | WEATHER_DATA_AGE | SENT | WEATHER DATA AGE ALERT: Weather station data file is 81.44 hours old.
+2025-06-07 11:47:44 | PLANT_DATA_AGE | SENT | PLANT DATA AGE ALERT: Plant station data file is 124.86 hours old.
+2025-06-07 11:48:10 | WEATHER_DATA_AGE | SENT | WEATHER DATA AGE ALERT: Weather station data file is 82.46 hours old.
