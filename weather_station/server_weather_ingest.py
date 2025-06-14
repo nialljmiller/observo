@@ -59,12 +59,18 @@ if not os.path.exists(MASTER_FILE):
         "BH1750_Light_lx"
     ]).to_csv(MASTER_FILE, index=False)
 
-def safe_write_csv(df, filename):
-    with open(filename, "w") as f:
-        # Acquire exclusive lock
+def safe_write_csv(df: pd.DataFrame, filename: str) -> None:
+    """Safely write a DataFrame to ``filename`` using a temporary file.
+
+    The file is written while holding an exclusive lock and then atomically
+    replaced so readers never see a partially written file.
+    """
+    temp_file = f"{filename}.tmp"
+    with open(temp_file, "w") as f:
         fcntl.flock(f, fcntl.LOCK_EX)
         df.to_csv(f, index=False)
         fcntl.flock(f, fcntl.LOCK_UN)
+    os.replace(temp_file, filename)
 
 
 
@@ -145,14 +151,21 @@ def append_new_data(master_data):
         logging.warning(f"Incoming file {INCOMING_FILE} does not exist. Skipping this iteration.")
         return master_data
 
-    # Validate file type
     file_type, _ = mimetypes.guess_type(INCOMING_FILE)
     if file_type != "text/csv":
         logging.warning(f"{INCOMING_FILE} is not a text/csv file. Detected type: {file_type}")
         return master_data
 
     try:
-        incoming_data = pd.read_csv(INCOMING_FILE, encoding="utf-8", on_bad_lines="skip")
+        # Read and clear the incoming file while holding a lock so the
+        # Raspberry Pi does not modify it concurrently.
+        with open(INCOMING_FILE, "r+") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            incoming_data = pd.read_csv(f, encoding="utf-8", on_bad_lines="skip")
+            f.seek(0)
+            f.truncate()  # Clear the file after reading
+            fcntl.flock(f, fcntl.LOCK_UN)
+
         incoming_data["Timestamp"] = pd.to_datetime(incoming_data["Timestamp"], errors="coerce")
         incoming_data = incoming_data.dropna(subset=["Timestamp"])
     except Exception as e:
