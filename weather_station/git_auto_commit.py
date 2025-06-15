@@ -20,7 +20,7 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 REPO_PATH = "/media/bigdata"
 
 # Times to commit each day (24-hour format)
-COMMIT_TIMES = ["10:00","12:00", "22:00"]  # 10 AM and 10 PM
+COMMIT_TIMES = ["22:00"]  # 10 AM and 10 PM
 
 def run_git_command(cmd):
     """Execute a git command and return the output."""
@@ -141,7 +141,7 @@ def run_git_auto_commit():
             logging.error(f"Git auto-commit: Process error with code {e.returncode}. Restarting in {retry_time} seconds...")
             time.sleep(retry_time)
         except Exception as e:
-            retry_time = 300  # 5 minutes
+            retry_time = 16000  # 5 minutes
             logging.error(f"Git auto-commit: Unexpected error: {e}. Restarting in {retry_time} seconds...")
             time.sleep(retry_time)
 
