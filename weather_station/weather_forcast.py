@@ -109,7 +109,15 @@ class WeatherForecaster:
 
         # Update input_dim and seq_length
         self.input_dim = data.shape[1]
-        self.seq_length = max(1, len(data) // self.target_seq_length)
+        # seq_length determines the length of the sequences used for training
+        # and inference.  The previous behaviour divided the length of the
+        # dataset by ``target_seq_length`` which often resulted in extremely
+        # short (e.g. length 1) sequences when ``target_seq_length`` was set to
+        # a large value.  This in turn caused the model to train on almost no
+        # temporal context, leading to very poor predictions.  Instead we want
+        # ``seq_length`` to be at most ``target_seq_length`` but never larger
+        # than ``len(data) - 1`` so that at least one training sample exists.
+        self.seq_length = min(len(data) - 1, self.target_seq_length)
         return data
 
     def validate_input_data(self, data):
