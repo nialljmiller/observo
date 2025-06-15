@@ -1232,15 +1232,37 @@ def plot_system_stats(csv_file, output_image="system_stats_plot_improved.png"):
     print(f"Improved plot saved as {output_image}")
 
 
-def calculate_dew_point(temp_c, humidity, pressure_hpa):
+def calculate_dew_point(temp_c, humidity, pressure_hpa=1013.25):
+    """Return dew point (°C) for given temperature, relative humidity and pressure.
+
+    Parameters
+    ----------
+    temp_c : float
+        Air temperature in Celsius.
+    humidity : float
+        Relative humidity in percent (0-100).
+    pressure_hpa : float, optional
+        Ambient pressure in hPa. Defaults to standard sea level pressure.
+
+    This implementation uses the Magnus formula for saturation vapour pressure
+    with a pressure correction recommended by WMO. The additional pressure
+    parameter has a minor effect but ensures calculations are physically
+    consistent at non‑standard pressures.
     """
-    Calculate the dew point temperature with pressure adjustment.
-    """
-    # Constants (adjusted for pressure):
-    a = 17.625
-    b = 243.04
-    # Adjust saturation vapor pressure for the actual pressure
-    alpha = (a * temp_c) / (b + temp_c) + np.log(humidity / 100)
+    # Clip unrealistic humidity values
+    if humidity <= 0:
+        return np.nan
+
+    # Saturation vapour pressure (hPa) using the Magnus approximation
+    a = 17.62
+    b = 243.12
+    es = 6.112 * np.exp((a * temp_c) / (b + temp_c))
+
+    # Pressure adjustment factor (Buck 1981)
+    f = 1.0007 + 3.46e-6 * pressure_hpa
+    e = humidity / 100.0 * es * f
+
+    alpha = np.log(e / 6.112)
     dew_point = (b * alpha) / (a - alpha)
     return dew_point
 
