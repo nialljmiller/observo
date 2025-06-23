@@ -340,8 +340,9 @@ class WeatherForecaster:
             # Take last timestep
             last_out = lstm_out[:, -1, :]  # (batch, hidden_dim)
 
-            # Map to final output
-            out = self.fc(last_out)       # (batch, output_dim)
+            # Map to final output and bound predictions between 0 and 1
+            out = self.fc(last_out)
+            out = torch.sigmoid(out)       # (batch, output_dim)
             return out
 
     ########################################################################
