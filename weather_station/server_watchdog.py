@@ -37,7 +37,7 @@ def run_git_commit():
     while True:
         try:
             subprocess.run(["python", "git_auto_commit.py"], check=True)
-            retry_time = 3600  # 1 hour
+            retry_time = 36000  # 10 hour
         except subprocess.CalledProcessError as e:
             retry_time = 300  # 5 minutes
             logging.error(f"Git auto-commit script crashed with exit code {e.returncode}. Restarting in {retry_time} seconds...")
