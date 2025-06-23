@@ -544,8 +544,8 @@ def generate_plots(data, predict_data, output_path, title, out_of_date_flag):
     data["Timestamp"] = data["Timestamp"].dt.tz_convert(mountain_tz)
     predict_data["Timestamp"] = predict_data["Timestamp"].dt.tz_convert(mountain_tz)
     altitude_m = data["BMP_Altitude_m"]
-    if altitude_m > 3000:
-        altitude_m = 2134.164856161599
+    altitude_m = altitude_m.where(altitude_m <= 3000, 2134.164856161599)
+
     # Calculate median temperature
 
     # Replace NaNs and Infs in all numeric columns
