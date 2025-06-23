@@ -1353,8 +1353,7 @@ def main():
     master_data = load_master_data(MASTER_FILE)
 
 
-    master_data.loc[master_data["BMP_Pressure_hPa"] < 50, "BMP_Pressure_hPa"] += 50
-
+    master_data.loc[master_data["BMP_Pressure_hPa"] < 500, "BMP_Pressure_hPa"] += 500
     master_data.loc[master_data["BMP_Temperature_C"] < 0, "DHT_Temperature_C"] *= -1
     master_data["DHT_Temperature_C"] = master_data["DHT_Temperature_C"] + temp_offset
     master_data["BMP_Temperature_C"] = master_data["BMP_Temperature_C"] + temp_offset
