@@ -412,6 +412,8 @@ class WeatherForecaster:
                 epoch_loss = 0
 
                 for batch_x, batch_y in loader:
+                    batch_x = batch_x.to(self.device)
+                    batch_y = batch_y.to(self.device)
                     self.optimizer.zero_grad()
                     outputs = self.model(batch_x)
                     loss = self.criterion(outputs.squeeze(), batch_y)
