@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader
 import numpy as np
 import pandas as pd
 from datetime import timedelta
@@ -340,8 +340,9 @@ class WeatherForecaster:
             # Take last timestep
             last_out = lstm_out[:, -1, :]  # (batch, hidden_dim)
 
-            # Map to final output
-            out = self.fc(last_out)       # (batch, output_dim)
+            # Map to final output and bound predictions between 0 and 1
+            out = self.fc(last_out)
+            out = torch.sigmoid(out)       # (batch, output_dim)
             return out
 
     ########################################################################
@@ -373,6 +374,21 @@ class WeatherForecaster:
         self.learning_rate = checkpoint['learning_rate']
         print(f"Model loaded from {model_path}")
 
+    class SequenceDataset(torch.utils.data.Dataset):
+        """Dataset that creates sequences on-the-fly to reduce memory usage."""
+
+        def __init__(self, data, seq_length):
+            self.data = data
+            self.seq_length = seq_length
+
+        def __len__(self):
+            return len(self.data) - self.seq_length
+
+        def __getitem__(self, idx):
+            x = self.data[idx:idx + self.seq_length, :]
+            y = self.data[idx + self.seq_length, 1]
+            return torch.tensor(x, dtype=torch.float32), torch.tensor(y, dtype=torch.float32)
+
     @staticmethod
     def create_sequences(data, seq_length):
         x, y = [], []
@@ -384,10 +400,7 @@ class WeatherForecaster:
         return np.array(x), np.array(y)
 
     def train_model(self, epochs=10, loss_csv_path="training_loss.csv", final_loss_csv_path="final_losses.csv"):
-        x, y = self.create_sequences(self.data, self.seq_length)
-        x_train = torch.tensor(x, dtype=torch.float32).to(self.device)
-        y_train = torch.tensor(y, dtype=torch.float32).to(self.device)
-        dataset = TensorDataset(x_train, y_train)
+        dataset = self.SequenceDataset(self.data, self.seq_length)
         loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
 
         with open(loss_csv_path, mode='w', newline='') as loss_file:
