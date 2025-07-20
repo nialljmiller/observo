@@ -533,7 +533,176 @@ def generate_hourly_gif_with_plot(image_dir, output_gif, data):
     os.replace(temp_gif, output_gif)
     print(f"[GIF] GIF saved to {output_gif}.")
 
+def generate_daily_gif_with_plot(image_dir, output_gif, data):
+    """
+    Generates an animated GIF from the images in `image_dir` (from the past 24 hours).
+    For each image, a plot (appended below the image) shows the cumulative temperature
+    and humidity data from the start of the day (now - 24 hours) up to the image's timestamp.
+    
+    Optimized for performance with 24 hours of data.
+    
+    Args:
+        image_dir (str): Directory where the .jpg images are stored.
+        output_gif (str): Path for saving the final GIF.
+        data (pd.DataFrame): DataFrame with at least these columns:
+            - "Timestamp": datetime values (assumed to be timezone-aware in UTC)
+            - "Median_Temperature_C": temperature in °C
+            - "DHT_Humidity_percent_Smoothed": humidity (%)
+    """
+    # Temporary filename (to avoid access issues)
+    temp_gif = os.path.join(os.path.dirname(output_gif), "temp.gif")
 
+    # Get current UTC time as a timezone-aware datetime
+    now = datetime.now(pytz.UTC)
+
+    # For the cumulative plot, define the starting time as 24 hours ago
+    plot_start = now - timedelta(hours=24)
+
+    # Get all JPEG images (assumes naming convention: YYYYMMDD_HHMMSS.jpg)
+    image_files = sorted(glob.glob(os.path.join(image_dir, "*.jpg")))
+    
+    # Filter images from the last 24 hours (using filename timestamps)
+    recent_images = []
+    for img in image_files:
+        try:
+            # Extract timestamp from filename (expected format: YYYYMMDD_HHMMSS)
+            img_filename = os.path.basename(img).replace(".jpg", "")
+            img_timestamp = datetime.strptime(img_filename, "%Y%m%d_%H%M%S")
+            # Localize the naive timestamp to UTC
+            img_timestamp = pytz.UTC.localize(img_timestamp)
+            if now - img_timestamp <= timedelta(hours=24):
+                recent_images.append((img, img_timestamp))
+        except ValueError:
+            continue  # Skip files with incorrect naming format
+
+    if len(recent_images) < 2:
+        print("[DAILY GIF] Not enough images to generate GIF (need at least 2). Skipping.")
+        return
+
+    print(f"[DAILY GIF] Generating GIF from {len(recent_images)} images...")
+
+    # Performance optimization: Pre-filter and downsample data for plotting
+    data_subset = data[(data["Timestamp"] >= plot_start) & (data["Timestamp"] <= now)]
+    # Downsample data for plotting if we have too many points (keep every Nth point)
+    if len(data_subset) > 500:  # Adjust threshold as needed
+        step = len(data_subset) // 500
+        data_subset = data_subset.iloc[::step]
+
+    frames = []
+    # Define the Mountain Time zone (using America/Denver to account for DST)
+    mountain_tz = pytz.timezone("America/Denver")
+
+    # Process ALL images - no skipping
+
+    # Loop over each image and create a composite frame
+    for i, (img_path, timestamp) in enumerate(recent_images):
+        if i % 10 == 0:  # Progress indicator
+            print(f"[DAILY GIF] Processing frame {i+1}/{len(recent_images)}")
+            
+        # Convert the image timestamp to Mountain Time for display
+        mountain_time = timestamp.astimezone(mountain_tz)
+
+        # Open image and perform any transforms (here, rotate 180°)
+        img = Image.open(img_path).transpose(Image.ROTATE_180)
+
+        # Add the timestamp text onto the image
+        draw = ImageDraw.Draw(img)
+        try:
+            # Smaller font for daily GIF to save space
+            font = ImageFont.truetype("arial.ttf", 28)
+        except IOError:
+            font = ImageFont.load_default()
+        text = mountain_time.strftime("%Y-%m-%d %H:%M:%S")
+        # Position the text near the bottom-right
+        text_position = (img.width - 250, img.height - 40)
+        draw.text(text_position, text, font=font, fill=(255, 0, 0))
+
+        # Get data subset up to current timestamp
+        current_subset = data_subset[data_subset["Timestamp"] <= timestamp]
+
+        # Create the plot with reduced size for performance
+        fig, ax_temp_c = plt.subplots(figsize=(6, 3))  # Smaller plot for performance
+        if not current_subset.empty:
+
+            # Simplified plotting - only temperature and humidity
+            ax_temp_c.plot(current_subset["Timestamp"], current_subset["Median_Temperature_C"],
+                   color="purple", alpha=0.8, linewidth=1, label="Temp (°C)")
+            ax_temp_c.set_ylabel("Temperature (°C)", color="purple")
+            ax_temp_c.tick_params(axis="y", labelcolor="purple")
+
+            # Add humidity on secondary y-axis
+            ax_hum = ax_temp_c.twinx()
+            ax_hum.plot(current_subset["Timestamp"], current_subset["DHT_Humidity_percent_Smoothed"],
+                color="green", alpha=0.8, linewidth=1, label="Humidity (%)")
+            ax_hum.set_ylabel("Humidity (%)", color="green")
+            ax_hum.tick_params(axis="y", labelcolor="green")
+
+            # Simplified title
+            plot_title = f"24h Data to {mountain_time.strftime('%H:%M')}"
+        else:
+            # If no data is found, indicate that on the plot
+            ax_temp_c.text(0.5, 0.5, "No data available", ha="center", va="center",
+                           transform=ax_temp_c.transAxes, fontsize=12)
+            plot_title = f"No Data around {mountain_time.strftime('%H:%M:%S')}"
+
+        # Simplified time formatting for 24h view
+        formatter = mdates.DateFormatter('%H:%M', tz=mountain_tz)
+        ax_temp_c.xaxis.set_major_formatter(formatter)
+        
+        # Reduce number of x-axis ticks for cleaner look
+        ax_temp_c.xaxis.set_major_locator(mdates.HourLocator(interval=4))
+
+        ax_temp_c.set_title(plot_title, fontsize=10)
+        ax_temp_c.set_xlabel("Time", fontsize=8)
+        
+        # Smaller tick labels
+        ax_temp_c.tick_params(labelsize=8)
+        if 'ax_hum' in locals():
+            ax_hum.tick_params(labelsize=8)
+        
+        fig.autofmt_xdate()
+        plt.tight_layout()
+
+        # Save the plot to a BytesIO buffer with lower DPI for performance
+        buf = BytesIO()
+        plt.savefig(buf, format="png", dpi=72)  # Lower DPI for performance
+        plt.close(fig)
+        buf.seek(0)
+        plot_img = Image.open(buf)
+
+        # Resize the plot so its width matches the image width
+        if plot_img.width != img.width:
+            new_height = int(plot_img.height * img.width / plot_img.width)
+            try:
+                resample_filter = Image.Resampling.LANCZOS
+            except AttributeError:
+                resample_filter = Image.ANTIALIAS
+
+            plot_img = plot_img.resize((img.width, new_height), resample_filter)
+
+        # Combine the original image (with timestamp) and the plot
+        combined_height = img.height + plot_img.height
+        combined_img = Image.new("RGB", (img.width, combined_height))
+        combined_img.paste(img, (0, 0))
+        combined_img.paste(plot_img, (0, img.height))
+
+        frames.append(combined_img)
+
+    print("[DAILY GIF] Saving GIF...")
+    
+    # Save the frames as an animated GIF with longer duration per frame
+    frames[0].save(
+        temp_gif,
+        save_all=True,
+        append_images=frames[1:],
+        duration=200,  # Longer duration per frame (vs 100 for hourly)
+        loop=0,
+        optimize=True  # Optimize GIF size
+    )
+
+    # Rename the temporary GIF to the final output path (atomic operation)
+    os.replace(temp_gif, output_gif)
+    print(f"[DAILY GIF] GIF saved to {output_gif}.")
 
 
 
@@ -1337,6 +1506,7 @@ def main():
     # Define image directory and output path for GIF
     IMAGE_DIR = "/media/bigdata/weather_station/images/"
     GIF_OUTPUT = "/media/bigdata/weather_station/hourly_timelapse.gif"
+    DAY_GIF_OUTPUT = "/media/bigdata/weather_station/daily_timelapse.gif"
 
 
     local_stats_file = "my_pc_stats.csv"
@@ -1479,6 +1649,9 @@ def main():
 
     print("\tGenerating hourly GIF...")
     generate_hourly_gif_with_plot(IMAGE_DIR, GIF_OUTPUT, master_data)
+    
+    print("\tGenerating daily GIF...")
+    generate_daily_gif_with_plot(IMAGE_DIR, DAY_GIF_OUTPUT, master_data)
 
 
     generate_summary_plot(master_data, f"/media/bigdata/weather_station/summary_plot.png")
