@@ -705,6 +705,41 @@ def generate_daily_gif_with_plot(image_dir, output_gif, data):
     print(f"[DAILY GIF] GIF saved to {output_gif}.")
 
 
+def compute_ECI(data):
+    """
+    Compute Environmental Comfort Index (ECI) from weather DataFrame.
+    Assumes columns:
+        - 'Humidity' (%)
+        - 'Median_Temperature_C' (°C)
+        - 'BMP_Pressure_hPa' (hPa)
+        - 'BH1750_Light_lx' (lux)
+    
+    Returns:
+        - pd.Series of ECI values (0–1), smoothed
+    """
+
+    def comfort_score(x, center, width, skew=0.0, kurtosis=1.0):
+        x_shifted = x - (skew * width)
+        score = np.exp(-((x_shifted - center) / width) ** (2 * kurtosis))
+        return np.clip(score, 0, 1)
+
+    # Compute normalized comfort scores
+    H_norm = comfort_score(data["Humidity"], center=50, width=20, skew=0.2, kurtosis=1.2)
+    T_norm = comfort_score(data["Median_Temperature_C"], center=21, width=5, skew=0.5, kurtosis=1.0)
+    P_norm = comfort_score(data["BMP_Pressure_hPa"], center=1013, width=10, skew=0.0, kurtosis=1.5)
+    L_norm = comfort_score(data["BH1750_Light_lx"], center=8000, width=7000, skew=-0.2, kurtosis=0.8)
+
+    # Weighted sum of normalized scores
+    ECI_raw = (
+        0.4 * T_norm +
+        0.35 * H_norm +
+        0.1 * P_norm +
+        0.15 * L_norm
+    )
+
+    # Smooth result with centered rolling mean
+    return pd.Series(ECI_raw).rolling(window=20, center=True, min_periods=1).mean()
+
 
 def generate_plots(data, predict_data, output_path, title, out_of_date_flag):
     """Generate a 4x4 subplot for temperature, humidity, pressure, and light with additional calculated metrics."""
@@ -764,27 +799,7 @@ def generate_plots(data, predict_data, output_path, title, out_of_date_flag):
     # Calculate specific humidity
     data["Specific_Humidity_gkg"] = 0.622 * e / (data["Sea_Level_Pressure_hPa"] - e) * 1000
 
-
-
-
-
-    # Normalize factors
-    H_norm = np.exp(-((H - 50)/20)**2)
-    T_comfort = np.clip((data["Median_Temperature_C"] - 21) / 6, -1, 1)  # Centered at 21°C for comfort zone
-    T_norm = np.clip(1 - abs((data["Median_Temperature_C"] - 21) / 6), 0, 1)  # Invert so values closer to 21°C score higher
-    P_norm = np.exp(-((data["BMP_Pressure_hPa"] - 1013)/30)**2)
-    L_norm = np.exp(-((data["BH1750_Light_lx"] - 10000)/10000)**2)  # Ambient light normalized (up to 50,000 lx)
-
-    # Weight factors for impact
-    ECI = (
-        0.35 * H_norm +  # Humidity
-        0.4 * T_norm +  # Temperature
-        0.1 * P_norm +  # Pressure
-        0.15 * L_norm    # Ambient Light
-    )
-
-    # Scale the result to 0-1 range
-    data["ECI"] = np.clip(ECI, 0, 1)
+    data["ECI"] = compute_ECI(data)
     
     fig, axs = plt.subplots(4, 2, figsize=(15, 15))
 
