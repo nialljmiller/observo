@@ -769,18 +769,18 @@ def generate_plots(data, predict_data, output_path, title, out_of_date_flag):
 
 
     # Normalize factors
-    H_norm = H / 100  # Humidity as a fraction
+    H_norm = np.exp(-((H - 50)/20)**2)
     T_comfort = np.clip((data["Median_Temperature_C"] - 21) / 6, -1, 1)  # Centered at 21°C for comfort zone
-    T_norm = 1 - abs(T_comfort)  # Invert so values closer to 21°C score higher
-    P_norm = np.clip((data["BMP_Pressure_hPa"] - 1013) / 50, -1, 1)  # Pressure normalized, with a cap
-    L_norm = np.clip(data["BH1750_Light_lx"] / 50000, 0, 1)  # Ambient light normalized (up to 50,000 lx)
+    T_norm = np.clip(1 - abs((data["Median_Temperature_C"] - 21) / 6), 0, 1)  # Invert so values closer to 21°C score higher
+    P_norm = np.exp(-((data["BMP_Pressure_hPa"] - 1013)/30)**2)
+    L_norm = np.exp(-((data["BH1750_Light_lx"] - 10000)/10000)**2)  # Ambient light normalized (up to 50,000 lx)
 
     # Weight factors for impact
     ECI = (
-        0.3 * H_norm +  # Humidity
-        0.5 * T_norm +  # Temperature
+        0.35 * H_norm +  # Humidity
+        0.4 * T_norm +  # Temperature
         0.1 * P_norm +  # Pressure
-        0.2 * L_norm    # Ambient Light
+        0.15 * L_norm    # Ambient Light
     )
 
     # Scale the result to 0-1 range
