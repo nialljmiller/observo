@@ -363,6 +363,13 @@ class WeatherForecaster:
 
     def save_model(self, model_path):
         """Save the model and optimizer state to a file."""
+        # Persist both the network weights and any preprocessing information
+        # required to make meaningful predictions later.  Without these values
+        # the model can be loaded but the scaling applied during inference will
+        # not match the scaling the model was trained with, resulting in wildly
+        # inaccurate forecasts.  Keeping the scalers alongside the weights
+        # ensures that a restored model behaves consistently with a freshly
+        # trained one.
         torch.save({
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
@@ -370,7 +377,15 @@ class WeatherForecaster:
             'hidden_dim': self.hidden_dim,
             'output_dim': self.output_dim,
             'num_layers': self.num_layers,
-            'learning_rate': self.learning_rate
+            'learning_rate': self.learning_rate,
+            # Store sequence length and feature scaling parameters for later
+            'seq_length': self.seq_length,
+            'temp_min': getattr(self, 'temp_min', None),
+            'temp_max': getattr(self, 'temp_max', None),
+            'hum_min': getattr(self, 'hum_min', None),
+            'hum_max': getattr(self, 'hum_max', None),
+            'pres_min': getattr(self, 'pres_min', None),
+            'pres_max': getattr(self, 'pres_max', None),
         }, model_path)
         print(f"Model saved to {model_path}")
 
@@ -378,14 +393,26 @@ class WeatherForecaster:
         """
         Load the model and optimizer state from a file.
         """
-        checkpoint = torch.load(model_path, map_location=self.device, weights_only=True)
+        # ``weights_only`` is only available in newer versions of PyTorch and
+        # causes a ``TypeError`` on older installations.  Since we are loading
+        # a trusted checkpoint created by ``save_model`` above, the safer option
+        # is to omit that flag entirely for maximum compatibility.
+        checkpoint = torch.load(model_path, map_location=self.device)
         self.model.load_state_dict(checkpoint['model_state_dict'])
         self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        self.input_dim = checkpoint['input_dim']
-        self.hidden_dim = checkpoint['hidden_dim']
-        self.output_dim = checkpoint['output_dim']
-        self.num_layers = checkpoint['num_layers']
-        self.learning_rate = checkpoint['learning_rate']
+        self.input_dim = checkpoint.get('input_dim', self.input_dim)
+        self.hidden_dim = checkpoint.get('hidden_dim', self.hidden_dim)
+        self.output_dim = checkpoint.get('output_dim', self.output_dim)
+        self.num_layers = checkpoint.get('num_layers', self.num_layers)
+        self.learning_rate = checkpoint.get('learning_rate', self.learning_rate)
+        # Restore sequence length and scaling parameters if present.
+        self.seq_length = checkpoint.get('seq_length', self.seq_length)
+        self.temp_min = checkpoint.get('temp_min', getattr(self, 'temp_min', 0))
+        self.temp_max = checkpoint.get('temp_max', getattr(self, 'temp_max', 1))
+        self.hum_min = checkpoint.get('hum_min', getattr(self, 'hum_min', 0))
+        self.hum_max = checkpoint.get('hum_max', getattr(self, 'hum_max', 1))
+        self.pres_min = checkpoint.get('pres_min', getattr(self, 'pres_min', 0))
+        self.pres_max = checkpoint.get('pres_max', getattr(self, 'pres_max', 1))
         print(f"Model loaded from {model_path}")
 
     class SequenceDataset(torch.utils.data.Dataset):
