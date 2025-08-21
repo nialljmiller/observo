@@ -180,6 +180,14 @@ class WeatherForecaster:
     def predict_future(self, recent_sequence, steps_ahead=6):
         """
         Predict future temperature values using inference preprocessing that matches training.
+
+        The previous implementation updated only the temperature feature of the last processed
+        timestep before feeding it back into the model.  Features that depended on temperature,
+        such as interaction terms, lag features, and rates of change, were left stale.  This
+        caused the model to receive inconsistent input distributions and quickly drift during
+        multi-step forecasts.  To maintain feature consistency, we now keep the raw sequence,
+        append each predicted temperature, and re-run the full inference preprocessing before
+        generating the next step.
         """
         self.model.eval()
         future_predictions = []
@@ -188,31 +196,37 @@ class WeatherForecaster:
         if isinstance(recent_sequence, torch.Tensor):
             recent_sequence = recent_sequence.squeeze(0).cpu().numpy()
 
-        # Use the training-consistent preprocessing for inference
-        processed_sequence = self.process_inference_data(recent_sequence)
-        # Convert to 3D tensor: shape (1, seq_length, feature_dim)
-        processed_sequence = torch.tensor(processed_sequence, dtype=torch.float32).unsqueeze(0).to(self.device)
-
-        if torch.isnan(processed_sequence).any():
-            print("Warning: Processed sequence contains NaN values. Attempting to fix...")
-            processed_sequence = torch.nan_to_num(processed_sequence, nan=0.0)
+        # Work with raw (unprocessed) data for iterative feature generation
+        raw_sequence = recent_sequence.copy()
 
         for _ in range(steps_ahead):
+            # Preprocess the current raw sequence to match training features
+            processed_sequence = self.process_inference_data(raw_sequence)
+            processed_tensor = (
+                torch.tensor(processed_sequence, dtype=torch.float32)
+                .unsqueeze(0)
+                .to(self.device)
+            )
+
+            if torch.isnan(processed_tensor).any():
+                print("Warning: Processed sequence contains NaN values. Attempting to fix...")
+                processed_tensor = torch.nan_to_num(processed_tensor, nan=0.0)
+
             with torch.no_grad():
-                next_prediction = self.model(processed_sequence).item()
-                future_predictions.append(next_prediction)
+                next_prediction_scaled = self.model(processed_tensor).item()
 
-                # Update the sequence: use model's prediction to update the temperature feature (assumed index 1)
-                last_timestep = processed_sequence[:, -1, :].clone()
-                next_timestep = last_timestep.clone()
-                next_timestep[0, 1] = next_prediction
+            # Convert back to original temperature scale
+            next_prediction = self.inverse_transform_predictions(
+                np.array([next_prediction_scaled])
+            )[0]
+            future_predictions.append(next_prediction)
 
-                # Shift sequence and append the new timestep
-                processed_sequence = torch.cat(
-                    (processed_sequence[:, 1:, :], next_timestep.unsqueeze(1)), dim=1
-                )
+            # Append predicted temperature to the raw sequence and drop the oldest entry
+            next_raw = raw_sequence[-1].copy()
+            next_raw[1] = next_prediction  # update temperature in raw scale
+            raw_sequence = np.vstack((raw_sequence[1:], next_raw))
 
-        return self.inverse_transform_predictions(np.array(future_predictions))
+        return np.array(future_predictions)
 
 
 
