@@ -109,7 +109,7 @@ def run_git_auto_commit():
             current_time = datetime.now()
             
             # Check if it's time to commit and we haven't committed recently
-            if is_commit_time() and (current_time - last_commit_time).total_seconds() > 6 * 3600:
+            if is_commit_time() and (current_time - last_commit_time).total_seconds() > 6 * 72000:
                 logging.info("Git auto-commit: It's time to commit!")
                 
                 # Check for changes

@@ -1531,14 +1531,7 @@ def main():
     # Example usage
     time_spans = construct_time_spans()
 
-    
-    print("Starting new iteration!")        
-    print("Reloading master file...")
-
-
-    print("Appending new data...")
     master_data = load_master_data(MASTER_FILE)
-
 
     master_data.loc[master_data["BMP_Pressure_hPa"] < 500, "BMP_Pressure_hPa"] += 500
     master_data.loc[master_data["BMP_Temperature_C"] < 0, "DHT_Temperature_C"] *= -1
@@ -1567,7 +1560,6 @@ def main():
                 print("Model file is outdated but it's outside of training hours. Will train at 4AM.")
 
         else:
-            print("Model file is up-to-date. Loading the model...")
             forecaster.load_model(model_path)
     else:
         print("Model file does not exist. Training the model...")
@@ -1579,7 +1571,6 @@ def main():
     file_infer_time = datetime.fromtimestamp(os.path.getmtime(PREDICT_FILE))
     if True:#datetime.now() - file_infer_time > timedelta(minutes=9):
         steps_ahead=600
-        print("Running temp inference...")
         # Use load_master_data to get interpolated, resampled data
         recent_data = forecaster.load_master_data()
         timestamps = pd.to_datetime(recent_data["Timestamp"])  # Already interpolated!
@@ -1602,8 +1593,6 @@ def main():
     humidity = master_data["DHT_Humidity_percent"].values
     smooth_timestamps = np.linspace(0, len(timestamps) - 1, len(timestamps))
     
-    print("Cleaning and smoothing data...")
-
     master_data["Sea_Level_Pressure_hPa"] = master_data["BMP_Pressure_hPa"] * (1 - (master_data["BMP_Altitude_m"] / 44330.77))**-5.255
     master_data["DHT_Temperature_Smoothed"] = master_data["DHT_Temperature_C"].rolling(window=rolling_window, min_periods=1, center=True).mean()
     master_data["BMP_Temperature_Smoothed"] = master_data["BMP_Temperature_C"].rolling(window=rolling_window, min_periods=1, center=True).mean()
@@ -1635,11 +1624,6 @@ def main():
     max_timestamp = master_data["Timestamp"].max()
     time_difference = current_time - max_timestamp
     
-    # Print the time difference to indicate how out-of-date the file is
-    print(f"File's last timestamp: {max_timestamp}")
-    print(f"Current time: {current_time}")
-    print(f"Time since last data update: {time_difference}")
-
     try:
         save_latest_copy(image_dir = IMAGE_DIR)
     except:
@@ -1655,7 +1639,6 @@ def main():
 
 
     for label, delta in time_spans.items():
-        print("\tGenerating plots...")
         # Use the maximum timestamp in the master_data DataFrame
         # Subset the data based on the maximum timestamp
         subset = master_data[master_data["Timestamp"] >= max_timestamp - delta].copy()
@@ -1685,13 +1668,8 @@ def main():
         hours_back=2,
         target_classes = ['bird', 'squirrel', 'cat', 'rabbit', 'fox', 'deer', 'raccoon', 'skunk', 'coyote', 'mouse', 'vole', 'chipmunk', 'prairie dog', 'badger', 'weasel','hawk', 'owl', 'magpie', 'crow', 'raven', 'turkey', 'woodpecker']
     )
-    #bot=bot,
 
-
-    print("Making loss and system metric plots...")
-    print("\t Making server stats plots...")
     plot_system_stats("my_pc_stats.csv", "system_stats_plot.png")
-    print("\t Making RPi stats plots...")
     plot_system_metrics("system_usage.csv", "system_metrics_plot.png")
 
 

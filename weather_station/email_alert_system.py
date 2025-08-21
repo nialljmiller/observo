@@ -377,6 +377,7 @@ def main():
     
     # Check for high temperature
     triggered, message = check_high_temperature()
+    triggered = False
     if triggered:
         print(f"HIGH TEMPERATURE ALERT: {message}")
         subject = "ALERT: Plant Station High Temperature"
@@ -397,6 +398,7 @@ This automatic alert was generated at {datetime.datetime.now().strftime('%Y-%m-%
     
     # Check for plant data age
     triggered, message = check_plant_data_age()
+    triggered = False
     if triggered:
         print(f"PLANT DATA AGE ALERT: {message}")
         subject = "ALERT: Plant Station Data File Age"
