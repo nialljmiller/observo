@@ -706,16 +706,19 @@ def generate_daily_gif_with_plot(image_dir, output_gif, data):
 
 
 def compute_ECI(data):
-    """
-    Compute Environmental Comfort Index (ECI) from weather DataFrame.
-    Assumes columns:
-        - 'Humidity' (%)
-        - 'Median_Temperature_C' (°C)
-        - 'BMP_Pressure_hPa' (hPa)
-        - 'BH1750_Light_lx' (lux)
-    
+    """Compute Environmental Comfort Index (ECI) from a weather DataFrame.
+
+    The function is tolerant of differing humidity column names used by
+    various data sources.  It will look for a column named ``"Humidity"`` and
+    fall back to ``"DHT_Humidity_percent"`` if necessary.  The remaining
+    required columns are:
+
+    - ``"Median_Temperature_C"`` (°C)
+    - ``"BMP_Pressure_hPa"`` (hPa)
+    - ``"BH1750_Light_lx"`` (lux)
+
     Returns:
-        - pd.Series of ECI values (0–1), smoothed
+        pd.Series: Smoothed ECI values in the range 0–1.
     """
 
     def comfort_score(x, center, width, skew=0.0, kurtosis=1.0):
@@ -723,8 +726,13 @@ def compute_ECI(data):
         score = np.exp(-((x_shifted - center) / width) ** (2 * kurtosis))
         return np.clip(score, 0, 1)
 
+    # Determine which humidity column is available
+    humidity_col = "Humidity" if "Humidity" in data.columns else "DHT_Humidity_percent"
+    if humidity_col not in data.columns:
+        raise KeyError("Data must contain 'Humidity' or 'DHT_Humidity_percent' column")
+
     # Compute normalized comfort scores
-    H_norm = comfort_score(data["Humidity"], center=50, width=20, skew=0.2, kurtosis=1.2)
+    H_norm = comfort_score(data[humidity_col], center=50, width=20, skew=0.2, kurtosis=1.2)
     T_norm = comfort_score(data["Median_Temperature_C"], center=21, width=5, skew=0.5, kurtosis=1.0)
     P_norm = comfort_score(data["BMP_Pressure_hPa"], center=1013, width=10, skew=0.0, kurtosis=1.5)
     L_norm = comfort_score(data["BH1750_Light_lx"], center=8000, width=7000, skew=-0.2, kurtosis=0.8)
