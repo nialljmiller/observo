@@ -14,6 +14,7 @@ import json
 import mimetypes
 import subprocess
 import warnings
+warnings.filterwarnings("ignore")
 from datetime import datetime, timedelta
 from io import BytesIO
 import glob

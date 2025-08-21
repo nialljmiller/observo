@@ -6,6 +6,7 @@ import csv
 import json
 import time
 import warnings
+warnings.filterwarnings("ignore")
 import glob
 import subprocess
 import mimetypes
