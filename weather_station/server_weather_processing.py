@@ -763,7 +763,30 @@ def generate_plots(data, predict_data, output_path, title, out_of_date_flag):
 
     # Replace NaNs and Infs in all numeric columns
     data.replace([np.inf, -np.inf], np.nan, inplace=True)
-    data.dropna(inplace=True)
+    # Only drop rows where core (BMP / timestamp) columns are missing —
+    # DHT columns may be entirely NaN if that sensor is dead, and that is OK.
+    core_cols = ["Timestamp", "BMP_Temperature_C", "BMP_Pressure_hPa"]
+    data.dropna(subset=core_cols, inplace=True)
+
+    # ── Sensor validity checks ──────────────────────────────────────────────
+    # A column is considered "valid" if at least 10 % of its values are real.
+    def _sensor_valid(series, min_frac=0.10):
+        if series is None or len(series) == 0:
+            return False
+        return series.notna().mean() >= min_frac
+
+    dht_temp_valid     = _sensor_valid(data.get("DHT_Temperature_C"))
+    dht_humidity_valid = _sensor_valid(data.get("DHT_Humidity_percent"))
+    dht_valid          = dht_temp_valid and dht_humidity_valid
+
+    def _dead_sensor_notice(ax, name="DHT Sensor"):
+        """Draw a centred notice on an axes when its sensor is offline."""
+        ax.text(
+            0.5, 0.5, f"{name}\nNo Data / Sensor Offline",
+            transform=ax.transAxes, ha="center", va="center",
+            fontsize=12, color="grey",
+            bbox=dict(boxstyle="round,pad=0.4", facecolor="lightyellow", alpha=0.8),
+        )
 
     # Convert temperatures to Fahrenheit
     data["BMP_Temperature_F"] = data["BMP_Temperature_C"] * 9 / 5 + 32
@@ -780,11 +803,11 @@ def generate_plots(data, predict_data, output_path, title, out_of_date_flag):
 
 
     timestamps = np.arange(len(data["Timestamp"]))
-    smooth_humidity = data["DHT_Humidity_percent_Smoothed"].values
+    smooth_humidity = data["DHT_Humidity_percent_Smoothed"].values if dht_humidity_valid else None
 
     # Heat Index Calculation
-    T = data["DHT_Temperature_F"]
-    H = smooth_humidity#Humidity as a percentage
+    T = data["DHT_Temperature_F"] if dht_temp_valid else data["BMP_Temperature_F"]
+    H = smooth_humidity if dht_humidity_valid else np.full(len(data), 50.0)  # neutral fallback
 
     h = altitude_m
   
@@ -846,12 +869,15 @@ def generate_plots(data, predict_data, output_path, title, out_of_date_flag):
     # Temperature Plot
     ax1 = axs[0, 0]
     ax1.plot(data["Timestamp"], data["BMP_Temperature_C"], color="blue", alpha=0.1)
-    ax1.plot(data["Timestamp"], data["DHT_Temperature_C"], color="cyan", alpha=0.1)
     ax1.plot(data["Timestamp"], data["BMP_Temperature_Smoothed"], label="BMP Temp", color="blue", alpha=0.7)
-    ax1.plot(data["Timestamp"], data["DHT_Temperature_Smoothed"], label="DHT Temp", color="cyan", alpha=0.7)    
-    ax1.plot(predict_data_subset["Timestamp"], predict_data_subset["Predicted_Temperature"], label="Predicted Temp", color="royalblue", alpha=0.7)
+    if dht_temp_valid:
+        ax1.plot(data["Timestamp"], data["DHT_Temperature_C"], color="cyan", alpha=0.1)
+        ax1.plot(data["Timestamp"], data["DHT_Temperature_Smoothed"], label="DHT Temp", color="cyan", alpha=0.7)
+    # Only show predictions when DHT was healthy (model input included DHT humidity)
+    if dht_valid:
+        ax1.plot(predict_data_subset["Timestamp"], predict_data_subset["Predicted_Temperature"], label="Predicted Temp", color="royalblue", alpha=0.7)
     ax1.plot(data["Timestamp"], data["Median_Temperature_C"], color="magenta", linestyle="--")
-    ax1.set_title("Temperature")
+    ax1.set_title("Temperature" + ("" if dht_temp_valid else " (DHT offline)"))
     ax1.set_ylabel("Temperature (°C)")
     ax1.legend(loc="upper left")
     ax1.grid()
@@ -867,13 +893,9 @@ def generate_plots(data, predict_data, output_path, title, out_of_date_flag):
     ax1.set_xlim(x_min - x_padding, x_max + x_padding)
 
     # Define the real temperature columns (ignore the predicted temperature)
-    real_temp_cols = [
-        "BMP_Temperature_C",
-        "DHT_Temperature_C",
-        "BMP_Temperature_Smoothed",
-        "DHT_Temperature_Smoothed",
-        "Median_Temperature_C"
-    ]
+    real_temp_cols = ["BMP_Temperature_C", "BMP_Temperature_Smoothed", "Median_Temperature_C"]
+    if dht_temp_valid:
+        real_temp_cols += ["DHT_Temperature_C", "DHT_Temperature_Smoothed"]
 
     # Calculate the overall min and max from the real temperature data
     y_min = data[real_temp_cols].min().min()
@@ -900,14 +922,16 @@ def generate_plots(data, predict_data, output_path, title, out_of_date_flag):
 
     # Humidity Plot with Cubic Spline
     ax2 = axs[0, 1]
-    ax2.plot(data["Timestamp"], data["DHT_Humidity_percent"], color="green", alpha=0.01)
-    ax2.plot(data["Timestamp"], data["DHT_Humidity_percent_Smoothed"], color="green",  label="Humidity (%)", alpha=0.7)
-
-    ax2.set_title("Humidity")
-    ax2.set_ylabel("Humidity (%)")
-    ax2.legend()
+    if dht_humidity_valid:
+        ax2.plot(data["Timestamp"], data["DHT_Humidity_percent"], color="green", alpha=0.01)
+        ax2.plot(data["Timestamp"], data["DHT_Humidity_percent_Smoothed"], color="green", label="Humidity (%)", alpha=0.7)
+        ax2.set_ylabel("Humidity (%)")
+        ax2.legend()
+        ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x:.2f}"))
+    else:
+        _dead_sensor_notice(ax2, "DHT Sensor (Humidity)")
+    ax2.set_title("Humidity" + ("" if dht_humidity_valid else " (DHT offline)"))
     ax2.grid()
-    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x:.2f}"))
     
 
 
@@ -949,10 +973,13 @@ def generate_plots(data, predict_data, output_path, title, out_of_date_flag):
    
     # Heat Index Plot
     ax2 = axs[2, 0]
-    ax2.plot(data["Timestamp"], data["Heat_Index"], label="Heat Index", color="orange")
-    ax2.set_title("Heat Index")
-    ax2.set_ylabel("Heat Index")
-    ax2.legend()
+    if dht_valid:
+        ax2.plot(data["Timestamp"], data["Heat_Index"], label="Heat Index", color="orange")
+        ax2.set_ylabel("Heat Index")
+        ax2.legend()
+    else:
+        _dead_sensor_notice(ax2, "DHT Sensor (Heat Index)")
+    ax2.set_title("Heat Index" + ("" if dht_valid else " (DHT offline)"))
     ax2.grid()
     
     
@@ -960,119 +987,86 @@ def generate_plots(data, predict_data, output_path, title, out_of_date_flag):
     
     # Dew Point Plot
     ax3 = axs[2, 1]
-    
-        
+
+    if dht_valid:
         # Function to apply a buffer to transitions
-    def apply_buffer(data, column_name, threshold=0):
-        values = data[column_name].values
-        buffered_values = values.copy()
-        
-        for i in range(1, len(values) - 1):
-            # Check for crossing into negative (or positive)
-            if (values[i] >= threshold and values[i - 1] < threshold) or \
-               (values[i] < threshold and values[i - 1] >= threshold):
-                # Apply buffer by extending the previous value
-                buffered_values[i + 1] = values[i]
-                buffered_values[i + 2] = values[i+1]
-        
-        return buffered_values
+        def apply_buffer(data, column_name, threshold=0):
+            values = data[column_name].values
+            buffered_values = values.copy()
+            
+            for i in range(1, len(values) - 1):
+                # Check for crossing into negative (or positive)
+                if (values[i] >= threshold and values[i - 1] < threshold) or \
+                   (values[i] < threshold and values[i - 1] >= threshold):
+                    # Apply buffer by extending the previous value
+                    buffered_values[i + 1] = values[i]
+                    buffered_values[i + 2] = values[i+1]
+            
+            return buffered_values
 
-    # Create separate series with NaNs to avoid connecting lines
-    dew_point_above = data["Dew_Point_C_smoothed"].where(data["Dew_Point_C_smoothed"] >= 0)  # Keep dew points above 0
-    dew_point_below = data["Dew_Point_C_smoothed"].where(data["Dew_Point_C_smoothed"] < 0)   # Keep frost points below 0
+        # Create separate series with NaNs to avoid connecting lines
+        dew_point_above = data["Dew_Point_C_smoothed"].where(data["Dew_Point_C_smoothed"] >= 0)
+        dew_point_below = data["Dew_Point_C_smoothed"].where(data["Dew_Point_C_smoothed"] < 0)
 
-# Apply buffer to dew point
-    data["Dew_Point_C_Buffered"] = apply_buffer(data, "Dew_Point_C", threshold=0)
+        data["Dew_Point_C_Buffered"] = apply_buffer(data, "Dew_Point_C", threshold=0)
 
-    # Plot Dew Point (above freezing) in blue
-    ax3.plot(
-        data["Timestamp"],
-        dew_point_above,
-        label="Dew Point (°C)",
-        color="blue",
-    )
+        ax3.plot(data["Timestamp"], dew_point_above, label="Dew Point (°C)", color="blue")
+        ax3.plot(data["Timestamp"], dew_point_below, label="Frost Point (°C)", color="lightblue", alpha=0.7)
 
-    # Plot Frost Point (below freezing) in light blue
-    ax3.plot(
-        data["Timestamp"],
-        dew_point_below,
-        label="Frost Point (°C)",
-        color="lightblue",
-        alpha=0.7,
-    )
+        ax3.set_ylabel("Point Temperature (°C)")
+        ax3.legend()
 
-    # Set plot title, labels, and legend
-    ax3.set_title("Dew and Frost Point")
-    ax3.set_ylabel("Point Temperature (°C)")
-    ax3.legend()
+        combined_min = data["Dew_Point_C"].min(skipna=True)
+        combined_max = data["Dew_Point_C"].max(skipna=True)
+        if pd.isna(combined_min) or pd.isna(combined_max):
+            combined_min, combined_max = -10, 40
+        if combined_min < 0:
+            combined_min *= 1.1
+        else:
+            combined_min *= 0.9
+        if combined_max < 0:
+            combined_max *= 0.8
+        else:
+            combined_max *= 1.1
+        if combined_min >= combined_max:
+            combined_min, combined_max = -10, 40
+        ax3.set_ylim(combined_min, combined_max)
+    else:
+        _dead_sensor_notice(ax3, "DHT Sensor (Dew/Frost Point)")
+
+    ax3.set_title("Dew and Frost Point" + ("" if dht_valid else " (DHT offline)"))
     ax3.grid()
-
-    # Calculate combined min and max for consistent y-axis scaling
-    combined_min = data["Dew_Point_C"].min(skipna=True)
-    combined_max = data["Dew_Point_C"].max(skipna=True)
-
-    # Validate the calculated limits
-    if pd.isna(combined_min) or pd.isna(combined_max):
-        print("Warning: Dew Point data contains invalid values. Setting default axis limits.")
-        combined_min, combined_max = -10, 40  # Default range (customize as needed)
-
-    # Add margins to the limits
-    if combined_min < 0:
-        combined_min *= 1.1
-    else:
-        combined_min *= 0.9
-
-    if combined_max < 0:
-        combined_max *= 0.8
-    else:
-        combined_max *= 1.1
-
-    # Safeguard: Ensure valid axis limits are applied
-    if combined_min >= combined_max:
-        print("Warning: Invalid axis limits calculated. Setting fallback limits.")
-        combined_min, combined_max = -10, 40  # Default range
-
-    ax3.set_ylim(combined_min, combined_max)
 
     # Specific Humidity Plot
     ax5 = axs[3, 0]
-    ax5.plot(data["Timestamp"], data["Specific_Humidity_gkg"], label="Specific Humidity (g/kg)", color="brown")
-    ax5.set_title("Specific Humidity")
-    ax5.set_ylabel("Specific Humidity (g/kg)")
-    ax5.legend()
+    if dht_valid:
+        ax5.plot(data["Timestamp"], data["Specific_Humidity_gkg"], label="Specific Humidity (g/kg)", color="brown")
+        ax5.set_ylabel("Specific Humidity (g/kg)")
+        ax5.legend()
+    else:
+        _dead_sensor_notice(ax5, "DHT Sensor (Specific Humidity)")
+    ax5.set_title("Specific Humidity" + ("" if dht_valid else " (DHT offline)"))
     ax5.grid()
-    
+
     # Environmental Comfort Index Plot
     ax6 = axs[3, 1]
-    ax6.plot(data["Timestamp"], data["ECI"], color="k", linewidth=1.5)
-    # Normalize ECI values for color mapping
-    norm = plt.Normalize(0,1)#data["ECI"].min(), data["ECI"].max())
-    cmap = plt.cm.get_cmap("RdYlGn")  # Red (discomfort) to Green (comfort)
-
-    # Convert timestamps to numerical format for plotting
-    timestamps_num = matplotlib.dates.date2num(data["Timestamp"])
-
-    # Create a color-mapped line
-    points = np.array([timestamps_num, data["ECI"]]).T.reshape(-1, 1, 2)
-    segments = np.concatenate([points[:-1], points[1:]], axis=1)
-    lc = matplotlib.collections.LineCollection(segments, cmap=cmap, norm=norm)
-    lc.set_array(data["ECI"])
-    lc.set_linewidth(1)
-
-    # Add the line collection to the axis
-    line = ax6.add_collection(lc)
-
-    # Add color bar for reference
-    cbar = plt.colorbar(line, ax=ax6, orientation="vertical", pad=0.02)
-    cbar.set_label("Environmental Comfort Index (ECI)")
-
-
-
-
-
-    # Axis formatting
-    ax6.set_title("Environmental Comfort Index")
-    ax6.set_ylabel("ECI")
+    if dht_valid:
+        ax6.plot(data["Timestamp"], data["ECI"], color="k", linewidth=1.5)
+        norm = plt.Normalize(0, 1)
+        cmap = plt.cm.get_cmap("RdYlGn")
+        timestamps_num = matplotlib.dates.date2num(data["Timestamp"])
+        points = np.array([timestamps_num, data["ECI"]]).T.reshape(-1, 1, 2)
+        segments = np.concatenate([points[:-1], points[1:]], axis=1)
+        lc = matplotlib.collections.LineCollection(segments, cmap=cmap, norm=norm)
+        lc.set_array(data["ECI"])
+        lc.set_linewidth(1)
+        line = ax6.add_collection(lc)
+        cbar = plt.colorbar(line, ax=ax6, orientation="vertical", pad=0.02)
+        cbar.set_label("Environmental Comfort Index (ECI)")
+        ax6.set_ylabel("ECI")
+    else:
+        _dead_sensor_notice(ax6, "DHT Sensor (ECI)")
+    ax6.set_title("Environmental Comfort Index" + ("" if dht_valid else " (DHT offline)"))
     ax6.grid()
 
     # Formatting
@@ -1688,4 +1682,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
