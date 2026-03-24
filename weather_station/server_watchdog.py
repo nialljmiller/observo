@@ -222,8 +222,8 @@ if __name__ == "__main__":
     # Create threads for each process
     threads = [
         threading.Thread(target=run_ingest),
-        threading.Thread(target=plant_plot),
-        threading.Thread(target=plant_ingest),
+        #threading.Thread(target=plant_plot),
+        #threading.Thread(target=plant_ingest),
         threading.Thread(target=run_processing),
         threading.Thread(target=run_email_alerts),
         threading.Thread(target=run_git_commit),
