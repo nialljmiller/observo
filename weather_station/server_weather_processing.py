@@ -191,7 +191,28 @@ def initialize_csv(output_file="system_stats.csv"):
 
 
 
+def check_sensor_validity(df, min_frac=0.10):
+    """
+    Run once per processing cycle. Returns a dict of booleans for every sensor/column.
+    A sensor is 'valid' if at least min_frac of its recent values are non-NaN.
+    """
+    def valid(col):
+        return col in df.columns and df[col].notna().mean() >= min_frac
 
+    flags = {
+        "bmp_temp":     valid("BMP_Temperature_C"),
+        "bmp_pressure": valid("BMP_Pressure_hPa"),
+        "dht_temp":     valid("DHT_Temperature_C"),
+        "dht_humidity": valid("DHT_Humidity_percent"),
+        "bh1750":       valid("BH1750_Light_lx"),
+    }
+    flags["dht"] = flags["dht_temp"] and flags["dht_humidity"]
+
+    # Log anything offline
+    for name, ok in flags.items():
+        if not ok:
+            logging.warning(f"Sensor offline or missing: {name}")
+    return flags
 
 def save_latest_copy(image_dir, output_name="latest.jpg"):
     """
@@ -1535,13 +1556,26 @@ def main():
     time_spans = construct_time_spans()
 
     master_data = load_master_data(MASTER_FILE)
+    sensor_flags = check_sensor_validity(master_data)
 
     master_data.loc[master_data["BMP_Pressure_hPa"] < 500, "BMP_Pressure_hPa"] += 500
     master_data.loc[master_data["BMP_Temperature_C"] < 0, "DHT_Temperature_C"] *= -1
     master_data["DHT_Temperature_C"] = master_data["DHT_Temperature_C"] + temp_offset
     master_data["BMP_Temperature_C"] = master_data["BMP_Temperature_C"] + temp_offset
 
-    forecaster = WeatherForecaster(master_file=MASTER_FILE, input_dim=48, hidden_dim=128, num_layers=6, batch_size=250, target_seq_length=3600)
+    feature_cols = ["BMP_Temperature_C", "BMP_Pressure_hPa"]
+    if sensor_flags["dht_humidity"]:
+        feature_cols = ["DHT_Humidity_percent"] + feature_cols
+    
+    forecaster = WeatherForecaster(
+        master_file=MASTER_FILE,
+        hidden_dim=128,
+        num_layers=6,
+        batch_size=250,
+        seq_length=3600,
+        feature_cols=feature_cols,
+    )    
+    
     # Define the model file path
     model_path = "/media/bigdata/weather_station/weather_model.pth"
     #forecaster.train_model(epochs=2);forecaster.save_model(model_path)
@@ -1603,7 +1637,12 @@ def main():
     master_data["Sea_Level_Pressure_hPa_Smoothed"] = master_data["Sea_Level_Pressure_hPa"].rolling(window=rolling_window, min_periods=1, center=True).mean()                
     master_data["BH1750_Light_lx_Smoothed"] = master_data["BH1750_Light_lx"].rolling(window=rolling_window, min_periods=1, center=True).mean()                
     master_data["DHT_Humidity_percent_Smoothed"] = master_data["DHT_Humidity_percent"].rolling(window=rolling_window*2, min_periods=1, center=True).mean()                
-    master_data["Median_Temperature_C"] = master_data[["BMP_Temperature_Smoothed", "DHT_Temperature_Smoothed"]].median(axis=1)
+    
+    temp_cols = ["BMP_Temperature_Smoothed"]
+    if sensor_flags["dht_temp"]:
+        temp_cols.append("DHT_Temperature_Smoothed")
+    master_data["Median_Temperature_C"] = master_data[temp_cols].median(axis=1)    
+    
     master_data["Median_Temperature_F"] = master_data["Median_Temperature_C"] * 9 / 5 + 32
     master_data["Dew_Point_C"] = master_data.apply(lambda row: calculate_dew_point(row["Median_Temperature_C"], row["DHT_Humidity_percent"], row["BMP_Pressure_hPa"]),axis=1,)
     master_data["Dew_Point_C_smoothed"] = master_data["Dew_Point_C"].rolling(window=rolling_window, center=True).mean()                
