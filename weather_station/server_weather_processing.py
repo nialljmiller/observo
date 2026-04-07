@@ -1607,6 +1607,7 @@ def main():
 
 
     file_infer_time = datetime.fromtimestamp(os.path.getmtime(PREDICT_FILE))
+    
     if True:#datetime.now() - file_infer_time > timedelta(minutes=9):
         steps_ahead=600
         # Use load_master_data to get interpolated, resampled data
