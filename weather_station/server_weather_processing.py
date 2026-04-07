@@ -1548,7 +1548,10 @@ def main():
 
     local_stats_file = "my_pc_stats.csv"
     initialize_csv(local_stats_file)
-    gather_system_stats(local_stats_file)
+    try:
+        gather_system_stats(local_stats_file)
+    except Exception as e:
+        logging.warning(f"gather_system_stats failed (skipping): {e}")
 
     # Example usage
     time_spans = construct_time_spans()
