@@ -389,8 +389,7 @@ def generate_summary_plot(data, output_path, sensor_flags=None):
 
 
 
-
-def generate_hourly_gif_with_plot(image_dir, output_gif, data):
+def generate_hourly_gif_with_plot(image_dir, output_gif, data, sensor_flags=None):
     """
     Generates an animated GIF from the images in `image_dir` (from the past hour).
     For each image, a plot (appended below the image) shows the cumulative temperature
@@ -483,13 +482,14 @@ def generate_hourly_gif_with_plot(image_dir, output_gif, data):
             ax_temp_f.yaxis.set_label_position("left")
             ax_temp_f.yaxis.tick_left()
 
-            # Plot humidity on a third y-axis (offset the right spine so scales do not overlap)
             ax_hum = ax_temp_c.twinx()
-            ax_hum.spines["right"]#.set_position(("outward", 60))
-            ax_hum.plot(subset["Timestamp"], subset["DHT_Humidity_percent_Smoothed"],
-                color="green", alpha=0.7, label="Humidity (%)")
-            ax_hum.set_ylabel("Humidity (%)", color="green")
-            ax_hum.tick_params(axis="y", labelcolor="green")
+            if sensor_flags and sensor_flags.get("dht_humidity"):
+                ax_hum.plot(subset["Timestamp"], subset["DHT_Humidity_percent_Smoothed"],
+                    color="green", alpha=0.7, label="Humidity (%)")
+                ax_hum.set_ylabel("Humidity (%)", color="green")
+                ax_hum.tick_params(axis="y", labelcolor="green")
+            else:
+                ax_hum.set_visible(False)
 
             plot_title = (f"Data from {plot_start.astimezone(mountain_tz).strftime('%H:%M:%S')} "
                           f"to {mountain_time.strftime('%H:%M:%S')}")
@@ -549,7 +549,8 @@ def generate_hourly_gif_with_plot(image_dir, output_gif, data):
     os.replace(temp_gif, output_gif)
     print(f"[GIF] GIF saved to {output_gif}.")
 
-def generate_daily_gif_with_plot(image_dir, output_gif, data):
+
+def generate_daily_gif_with_plot(image_dir, output_gif, data, sensor_flags=None):
     """
     Generates an animated GIF from the images in `image_dir` (from the past 24 hours).
     For each image, a plot (appended below the image) shows the cumulative temperature
@@ -1691,7 +1692,7 @@ def main():
     generate_summary_plot(master_data, f"/media/bigdata/weather_station/summary_plot.png", sensor_flags)
     #print("\t\tCalculating rolling averages...")
     #calculate_rolling_averages(master_data, time_spans)
-    save_last_minute_averages(master_data, predict_data, "/media/bigdata/weather_station/small_summary.html")
+    save_last_minute_averages(master_data, predict_data, "/media/bigdata/weather_station/small_summary.html", sensor_flags)
 
     print("\tDetecting birds...")
     BIRD_IMAGE_DIR = os.path.join(IMAGE_DIR, "birds")
