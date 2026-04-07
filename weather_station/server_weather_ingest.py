@@ -158,17 +158,17 @@ def append_new_data(master_data):
         return master_data
 
     try:
-        # Read and clear the incoming file while holding a lock so the
-        # Raspberry Pi does not modify it concurrently.
         with open(INCOMING_FILE, "r+") as f:
             fcntl.flock(f, fcntl.LOCK_EX)
             incoming_data = pd.read_csv(f, encoding="utf-8", on_bad_lines="skip")
             f.seek(0)
-            f.truncate()  # Clear the file after reading
+            f.truncate()
             fcntl.flock(f, fcntl.LOCK_UN)
-
+    
         incoming_data["Timestamp"] = pd.to_datetime(incoming_data["Timestamp"], errors="coerce")
         incoming_data = incoming_data.dropna(subset=["Timestamp"])
+    except pd.errors.EmptyDataError:
+        return master_data  # File was empty (truncated, Pi hasn't written yet) — totally normal
     except Exception as e:
         logging.error(f"Error loading incoming data: {e}")
         return master_data
