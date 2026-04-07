@@ -97,7 +97,7 @@ class WeatherForecaster:
         learning_rate: float = 1e-3,
         batch_size: int = 256,
         # Sequence
-        seq_length: int = 1000,
+        seq_length: int = 500,
         # Features
         feature_cols: list = None,
         target_col: str = "BMP_Temperature_C",
