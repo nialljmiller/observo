@@ -15,6 +15,8 @@ import torchvision.transforms as transforms
 import torchvision.models as models
 import urllib.request
 
+IMAGENET_LABELS_FILE = "imagenet_classes.txt"
+
 # --- New: Image Preprocessing ---
 def preprocess_image(img):
     """
@@ -27,8 +29,8 @@ def preprocess_image(img):
 # --- Core Functions ---
 def load_models():
     try:
-        model_small = torch.hub.load('ultralytics/yolov5', 'custom', path='yolov5m.pt', force_reload=True)
-        model_large = torch.hub.load('ultralytics/yolov5', 'custom', path='yolov5l.pt', force_reload=True)
+        model_small = torch.hub.load('ultralytics/yolov5', 'custom', path='yolov5m.pt')
+        model_large = torch.hub.load('ultralytics/yolov5', 'custom', path='yolov5l.pt')
         return [model_small, model_large]
     except Exception as e:
         logging.error(f"Failed to load models: {e}")
@@ -121,15 +123,18 @@ def filter_detections(detections):
     # Additional filtering can be implemented here.
     return detections
 
-# --- Optional Ensemble Refinement for Detections ---
 def load_imagenet_labels():
+    if os.path.exists(IMAGENET_LABELS_FILE):
+        with open(IMAGENET_LABELS_FILE) as f:
+            return [l.strip() for l in f]
     url = 'https://raw.githubusercontent.com/pytorch/hub/master/imagenet_classes.txt'
-    response = urllib.request.urlopen(url)
-    imagenet_classes = [line.decode('utf-8').strip() for line in response.readlines()]
-    return imagenet_classes
+    labels = [l.decode().strip() for l in urllib.request.urlopen(url)]
+    with open(IMAGENET_LABELS_FILE, "w") as f:
+        f.write("\n".join(labels))
+    return labels
 
 def load_classifier():
-    classifier = models.resnet50(pretrained=True)
+    classifier = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
     classifier.eval()
     return classifier
 
