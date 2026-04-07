@@ -114,8 +114,8 @@ class WeatherForecaster:
         self.dropout = dropout
         self.learning_rate = learning_rate
         self.batch_size = batch_size
-        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
+        self.device = device or torch.device("cpu")
+        
         self.feature_cols = feature_cols or [
             "DHT_Humidity_percent",
             "BMP_Temperature_C",
