@@ -240,89 +240,28 @@ def save_latest_copy(image_dir, output_name="latest.jpg"):
     return True
 
 
-def gather_system_stats(output_file="system_stats.csv"):
-    """Appends detailed system stats to the CSV file."""
-    # Initialize NVIDIA Management Library (for GPU stats)
-    nvmlInit()
-    gpu_handle = nvmlDeviceGetHandleByIndex(0)  # Assuming a single NVIDIA GPU
+STATS_FILE = "my_pc_stats.csv"
 
-    # Gather CPU usage and temperature
-    cpu_usage = psutil.cpu_percent(interval=1)
-    cpu_temp = None
+def gather_system_stats(output_file=STATS_FILE):
+    """Append CPU/memory/temp stats to a CSV, creating it with a header if needed."""
+    cpu_usage  = psutil.cpu_percent(interval=1)
+    memory_pct = psutil.virtual_memory().percent
     try:
-        # Attempt to get CPU temperature (Linux-specific)
         cpu_temp = psutil.sensors_temperatures()["coretemp"][0].current
-    except KeyError:
-        cpu_temp = "N/A"
+    except (KeyError, IndexError, AttributeError):
+        cpu_temp = None
 
-    # Gather memory usage stats
-    memory = psutil.virtual_memory()
-    memory_usage = memory.percent
-
-    # Gather GPU usage and temperature
-    gpu_utilization = nvmlDeviceGetUtilizationRates(gpu_handle)
-    gpu_memory = nvmlDeviceGetMemoryInfo(gpu_handle)
-    gpu_temp = nvmlDeviceGetTemperature(gpu_handle, NVML_TEMPERATURE_GPU)
-
-    # Gather disk usage stats
-    disk_usage = []
-    for partition in psutil.disk_partitions():
-        try:
-            usage = psutil.disk_usage(partition.mountpoint)
-            disk_usage.append({
-                "device": partition.device,
-                "mountpoint": partition.mountpoint,
-                "used": usage.used,
-                "total": usage.total,
-                "percent": usage.percent
-            })
-        except PermissionError:
-            continue
-
-    # Gather net disk I/O
-    disk_io = psutil.disk_io_counters()
-    total_read = disk_io.read_bytes / (1024**2)  # Convert to MB
-    total_write = disk_io.write_bytes / (1024**2)  # Convert to MB
-
-    # Gather additional temperatures using `sensors`
-    formatted_temps = {}
-    try:
-        sensors_output = subprocess.check_output(["sensors"], text=True).splitlines()
-        for line in sensors_output:
-            if ":" in line:
-                parts = line.split(":")
-                label = parts[0].strip()
-                temp_data = parts[1].strip().split()
-                if temp_data and temp_data[0].replace(".", "").isdigit():
-                    formatted_temps[label] = float(temp_data[0].replace("°C", ""))
-    except Exception as e:
-        print(f"Error fetching additional temperatures: {e}")
-
-    # Format disk usage and temperatures for CSV
-    disk_usage_str = "; ".join(
-        f"{entry['device']}({entry['mountpoint']}): {entry['used']/1024**3:.2f}GB/{entry['total']/1024**3:.2f}GB ({entry['percent']}%)"
-        for entry in disk_usage
-    )
-    temp_str = "; ".join(f"{key}: {value}°C" for key, value in formatted_temps.items())
-
-    # Append data to CSV
-    with open(output_file, mode='a', newline='') as csvfile:
-        writer = csv.writer(csvfile)
+    write_header = not os.path.exists(output_file) or os.path.getsize(output_file) == 0
+    with open(output_file, "a", newline="") as f:
+        writer = csv.writer(f)
+        if write_header:
+            writer.writerow(["Timestamp", "CPU_Usage_pct", "Memory_Usage_pct", "CPU_Temp_C"])
         writer.writerow([
-            datetime.now(),
-            f"{cpu_usage}%",
-            f"{cpu_temp}°C" if cpu_temp != "N/A" else "N/A",
-            f"{memory_usage}%",
-            f"{gpu_utilization.gpu}%",
-            f"{gpu_memory.used / gpu_memory.total * 100:.2f}%",
-            f"{gpu_temp}°C",
-            disk_usage_str,
-            f"Read: {total_read:.2f}MB, Write: {total_write:.2f}MB",
-            temp_str
+            datetime.now().isoformat(),
+            round(cpu_usage, 1),
+            round(memory_pct, 1),
+            round(cpu_temp, 1) if cpu_temp is not None else "N/A",
         ])
-
-    nvmlShutdown()
-
 
 
 
@@ -1211,70 +1150,6 @@ def calculate_rolling_averages(data, time_spans):
     os.chmod(html_file, 0o664)
 
 
-def plot_system_metrics(csv_file_path, output_image_path):
-
-    """
-    Reads a CSV file containing system metrics, plots the data with dual y-axes, 
-    and saves the plot as an image.
-
-    Parameters:
-    - csv_file_path: str, path to the input CSV file.
-    - output_image_path: str, path to save the output plot image.
-    """
-    # Read the CSV file
-    data = pd.read_csv(csv_file_path)
-
-    # Convert the 'Timestamp' column to datetime format
-    data = data.dropna(subset=["Timestamp"])  # Drop rows with invalid timestamps
-    data = data.sort_values("Timestamp").reset_index(drop=True)
-    mountain_tz = pytz.timezone("America/Denver")
-    #data["Timestamp"] = data["Timestamp"].dt.tz_convert(mountain_tz)
-    data['Timestamp'] = pd.to_datetime(data['Timestamp'], format="%Y-%m-%d_%H-%M-%S", errors="coerce")
-
-    # Create the plot
-    fig, ax1 = plt.subplots(figsize=(12, 6))
-
-    # Plot CPU Temperature on the LHS axis
-    ax1.plot(data['Timestamp'], data['CPU Temperature (°C)'], label='CPU Temperature (°C)', color='red', marker=',')
-    ax1.set_xlabel("Timestamp")
-    ax1.set_ylabel("CPU Temperature (°C)", color='red')
-    ax1.tick_params(axis='y', labelcolor='red')
-    ax1.grid(True, which='both', linestyle='--', linewidth=0.5)
-
-    # Create a second y-axis for CPU and Memory Usage
-    ax2 = ax1.twinx()
-    ax2.plot(data['Timestamp'], data['CPU Usage (%)'], label='CPU Usage (%)', color='blue', marker=',')
-    ax2.plot(data['Timestamp'], data['Memory Usage (%)'], label='Memory Usage (%)', color='green', marker=',')
-    ax2.set_ylabel("Usage (%)", color='blue')
-    ax2.tick_params(axis='y', labelcolor='blue')
-
-    # Add a legend
-    lines1, labels1 = ax1.get_legend_handles_labels()
-    lines2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(lines1 + lines2, labels1 + labels2, loc='upper left')
-
-
-
-    # Plot CPU usage and temperature
-    ax1.set_xlabel("Timestamp")
-    ax1.xaxis.set_major_formatter(DateFormatter("%H:%M"))
-
-    # Plot GPU temperature
-    ax2.set_xlabel("Timestamp")
-    ax2.xaxis.set_major_formatter(DateFormatter("%H:%M"))
-
-
-
-
-    # Format the x-axis
-    plt.xticks(rotation=45)
-    plt.title("Weather Computer Metrics")
-    plt.tight_layout()
-
-    # Save the plot to the specified path
-    plt.savefig(output_image_path)
-    plt.close()
-
 
 
 def clean_percentage(series):
@@ -1311,134 +1186,38 @@ def parse_disk_usage(disk_usage_str):
         print(f"Error parsing disk usage string: {disk_usage_str} - {e}")
         return 0.0, 0.0
 
+def plot_system_stats(csv_file=STATS_FILE, output_image="system_stats_plot.png"):
+    """Plot CPU usage, memory usage, and CPU temp from the stats CSV."""
+    try:
+        df = pd.read_csv(csv_file, parse_dates=["Timestamp"])
+        df = df.dropna(subset=["Timestamp"]).sort_values("Timestamp").tail(2000)
+    except Exception as e:
+        logging.warning(f"plot_system_stats: could not read {csv_file}: {e}")
+        return
 
-def plot_system_stats(csv_file, output_image="system_stats_plot_improved.png"):
-    """Plots system stats from the CSV file and saves as an image."""
-    # Load data
-    df = pd.read_csv(csv_file, parse_dates=["Timestamp"])
-
-    # Clean percentage columns
-    for col in ["CPU Usage (%)", "Memory Usage (%)", "GPU Usage (%)", "GPU Memory Usage (%)"]:
-        df[col] = clean_percentage(df[col])
-
-    # Extract Disk Usage Data
-    disk_totals = df["Disk Usage"].apply(parse_disk_usage)
-    df["Disk Used (GB)"], df["Disk Total (GB)"] = zip(*disk_totals)
-
-    # Extract Net Disk I/O
-    net_io = df["Net Disk I/O (MB)"].str.extract(r"Read: ([\d.]+)MB, Write: ([\d.]+)MB").astype(float)
-    df["Disk Read (MB)"], df["Disk Write (MB)"] = net_io[0], net_io[1]
-
-    # Initialize subplots
-    fig, axes = plt.subplots(4, 2, figsize=(18, 14))
-    fig.suptitle("System Statistics", fontsize=20)
-
-    time_formatter = DateFormatter("%H:%M")
-
-    # Plot CPU usage and memory usage
-    ax1 = axes[0, 0]
-    ax1.plot(df["Timestamp"], df["CPU Usage (%)"], label="CPU Usage (%)", color="blue")
-    ax1_twin = ax1.twinx()
-    ax1_twin.plot(df["Timestamp"], df["Memory Usage (%)"], label="Memory Usage (%)", color="red")
-    ax1.set_title("CPU and Memory Usage", fontsize=12)
-    ax1.set_ylabel("CPU Usage (%)", color="blue")
-    ax1_twin.set_ylabel("Memory Usage (%)", color="red")
-    ax1.set_xlabel("Timestamp")
+    fig, ax1 = plt.subplots(figsize=(12, 5))
+    ax1.plot(df["Timestamp"], df["CPU_Usage_pct"],    label="CPU Usage (%)",    color="blue")
+    ax1.plot(df["Timestamp"], df["Memory_Usage_pct"], label="Memory Usage (%)", color="green")
+    ax1.set_ylabel("Usage (%)")
+    ax1.set_ylim(0, 100)
     ax1.legend(loc="upper left")
-    ax1_twin.legend(loc="upper right")
-    ax1.grid()
+    ax1.grid(True, linestyle="--", alpha=0.5)
 
-    # Plot CPU temperature
-    ax2 = axes[0, 1]
-    ax2.plot(df["Timestamp"], df["CPU Temp (\u00b0C)"].str.rstrip("\u00b0C").astype(float), label="CPU Temp (\u00b0C)", color="green")
-    ax2.set_title("CPU Temperature", fontsize=12)
-    ax2.set_ylabel("Temperature (\u00b0C)")
-    ax2.set_xlabel("Timestamp")
-    ax2.legend(loc="upper left")
-    ax2.grid()
+    if "CPU_Temp_C" in df.columns:
+        ax2 = ax1.twinx()
+        temps = pd.to_numeric(df["CPU_Temp_C"], errors="coerce")
+        ax2.plot(df["Timestamp"], temps, label="CPU Temp (°C)", color="red", alpha=0.7)
+        ax2.set_ylabel("CPU Temp (°C)", color="red")
+        ax2.tick_params(axis="y", labelcolor="red")
+        ax2.legend(loc="upper right")
 
-    # Plot GPU usage and memory usage
-    ax3 = axes[1, 0]
-    ax3.plot(df["Timestamp"], df["GPU Usage (%)"], label="GPU Usage (%)", color="purple")
-    ax3_twin = ax3.twinx()
-    ax3_twin.plot(df["Timestamp"], df["GPU Memory Usage (%)"], label="GPU Memory Usage (%)", color="orange")
-    ax3.set_title("GPU Usage and Memory", fontsize=12)
-    ax3.set_ylabel("GPU Usage (%)", color="purple")
-    ax3_twin.set_ylabel("GPU Memory Usage (%)", color="orange")
-    ax3.set_xlabel("Timestamp")
-    ax3.legend(loc="upper left")
-    ax3_twin.legend(loc="upper right")
-    ax3.grid()
-
-    # Plot GPU temperature
-    ax4 = axes[1, 1]
-    ax4.plot(df["Timestamp"], df["GPU Temp (\u00b0C)"].str.rstrip("\u00b0C").astype(float), label="GPU Temp (\u00b0C)", color="brown")
-    ax4.set_title("GPU Temperature", fontsize=12)
-    ax4.set_ylabel("Temperature (\u00b0C)")
-    ax4.set_xlabel("Timestamp")
-    ax4.legend(loc="upper left")
-    ax4.grid()
-
-    # Plot Disk Usage
-    ax5 = axes[2, 0]
-    ax5.plot(df["Timestamp"], df["Disk Used (GB)"]/1024, label="Disk Used (TB)", color="cyan")
-    ax5.plot(df["Timestamp"], df["Disk Total (GB)"]/1024, label="Disk Total (TB)", color="black", linestyle="dashed")
-    ax5.set_title("Disk Usage", fontsize=12)
-    ax5.set_ylabel("Disk Space (TB)")
-    ax5.set_xlabel("Timestamp")
-    ax5.legend(loc="upper left")
-    ax5.grid()
-
-
-
-    # Compute deltas for Disk Read and Write
-    df["Disk Read Delta (MB)"] = df["Disk Read (MB)"].diff().fillna(0)
-    df["Disk Write Delta (MB)"] = df["Disk Write (MB)"].diff().fillna(0)
-
-    # Plot Net Disk I/O Delta
-    ax6 = axes[2, 1]
-    ax6.plot(df["Timestamp"], df["Disk Read Delta (MB)"], label="Disk Read Delta (MB)", color="magenta")
-    ax6.plot(df["Timestamp"], df["Disk Write Delta (MB)"], label="Disk Write Delta (MB)", color="orange")
-    ax6.set_title("Net Disk I/O Delta", fontsize=12)
-    ax6.set_ylabel("Data (MB)")
-    ax6.set_xlabel("Timestamp")
-    ax6.legend(loc="upper left")
-    ax6.grid()
-
-    # Set y-axis to powers of 10
-    ax6.set_yscale('log')  # Logarithmic scale
-    ax6.yaxis.set_major_locator(ticker.LogLocator(base=10.0))  # Major ticks at powers of 10
-    ax6.yaxis.set_minor_locator(ticker.LogLocator(base=10.0, subs="auto", numticks=10))  # Minor ticks between
-    ax6.yaxis.set_minor_formatter(ticker.NullFormatter())  # Hide minor tick labels for clarity
-
-
-    # Plot other temperatures (Thermals)
-    ax7 = axes[3, 0]
-    if "Thermals" in df.columns and not df["Thermals"].isnull().all():
-        df["Thermals"] = df["Thermals"].fillna("").astype(str)
-        thermals = df["Thermals"].str.extractall(r"([\w\s]+)=([\d.]+)").reset_index()
-        thermals_pivot = thermals.pivot(index="level_0", columns=0, values=1).apply(pd.to_numeric, errors="coerce")
-        for col in thermals_pivot:
-            ax7.plot(df["Timestamp"], thermals_pivot[col], label=col)
-    else:
-        ax7.text(0.5, 0.5, "No Thermal Data Available", ha="center", va="center", fontsize=12)
-    ax7.set_title("Other Temperatures", fontsize=12)
-    ax7.set_ylabel("Temperature (\u00b0C)")
-    ax7.set_xlabel("Timestamp")
-    ax7.legend(loc="upper left")
-    ax7.grid()
-
-    # Remove empty subplot
-    axes[3, 1].axis('off')
-
-    # Adjust layout
-    for ax in axes.flat:
-        ax.xaxis.set_major_formatter(time_formatter)
-    plt.tight_layout(rect=[0, 0, 1, 0.96])
+    ax1.xaxis.set_major_formatter(DateFormatter("%H:%M"))
+    plt.xticks(rotation=45)
+    plt.title("System Stats")
+    plt.tight_layout()
     plt.savefig(output_image)
     plt.close()
-    print(f"Improved plot saved as {output_image}")
-
+    logging.info(f"System stats plot saved to {output_image}")
 
 def calculate_dew_point(temp_c, humidity, pressure_hpa=1013.25):
     """Return dew point (°C) for given temperature, relative humidity and pressure.
@@ -1544,14 +1323,11 @@ def main():
     IMAGE_DIR = "/media/bigdata/weather_station/images/"
     GIF_OUTPUT = "/media/bigdata/weather_station/hourly_timelapse.gif"
     DAY_GIF_OUTPUT = "/media/bigdata/weather_station/daily_timelapse.gif"
-
-
-    local_stats_file = "my_pc_stats.csv"
-    initialize_csv(local_stats_file)
+    
     try:
-        gather_system_stats(local_stats_file)
+        gather_system_stats()
     except Exception as e:
-        logging.warning(f"gather_system_stats failed (skipping): {e}")
+        logging.warning(f"gather_system_stats failed: {e}")
 
     # Example usage
     time_spans = construct_time_spans()
@@ -1709,10 +1485,11 @@ def main():
         hours_back=2,
         target_classes = ['bird', 'squirrel', 'cat', 'rabbit', 'fox', 'deer', 'raccoon', 'skunk', 'coyote', 'mouse', 'vole', 'chipmunk', 'prairie dog', 'badger', 'weasel','hawk', 'owl', 'magpie', 'crow', 'raven', 'turkey', 'woodpecker']
     )
-
-    plot_system_stats("my_pc_stats.csv", "system_stats_plot.png")
-    plot_system_metrics("system_usage.csv", "system_metrics_plot.png")
-
+    
+    try:
+        plot_system_stats()
+    except Exception as e:
+        logging.warning(f"plot_system_stats failed: {e}")
 
 
 
