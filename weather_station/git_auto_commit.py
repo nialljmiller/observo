@@ -129,10 +129,10 @@ def run_git_auto_commit():
                         logging.error("Git auto-commit: Failed to push changes to remote")
                 else:
                     logging.error("Git auto-commit: Failed to create commit")
-            
-            # Sleep for a while before checking again
-            for remaining in range(60, 0, -1):
-                print(f"Next git auto-commit check in {remaining} seconds...", end="\r", flush=True)
+                        
+            for remaining in range(3600, 0, -1):
+                if remaining % 600 == 0:
+                    print(f"Next git auto-commit check in {remaining//60} min...", end="\r", flush=True)
                 time.sleep(1)
             print("Checking git auto-commit now!                           ")
             
