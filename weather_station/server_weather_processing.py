@@ -582,7 +582,7 @@ def generate_daily_gif_with_plot(image_dir, output_gif, data, sensor_flags=None)
             ax_hum = ax_temp_c.twinx()
             
             if sensor_flags and sensor_flags.get("dht_humidity"):
-                ax_hum.plot(subset["Timestamp"], subset["DHT_Humidity_percent_Smoothed"],
+                ax_hum.plot(current_subset["Timestamp"], subset["DHT_Humidity_percent_Smoothed"],
                     color="green", alpha=0.7, label="Humidity (%)")
                 ax_hum.set_ylabel("Humidity (%)", color="green")
                 ax_hum.tick_params(axis="y", labelcolor="green")
