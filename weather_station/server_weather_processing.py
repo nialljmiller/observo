@@ -1341,7 +1341,7 @@ def main():
         hidden_dim=128,
         num_layers=6,
         batch_size=250,
-        seq_length=3600,
+        seq_length=500,
         feature_cols=feature_cols,
     )    
     
@@ -1358,7 +1358,7 @@ def main():
         if current_time - file_mod_time > timedelta(days=1):
             if 4 <= current_hour < 5:
                 print("Model file is older than a day. Retraining the model...")
-                forecaster.train_model(epochs=300)
+                forecaster.train_model(epochs=50)
                 forecaster.save_model(model_path)
                 forecaster.plot_training_loss("training_loss.csv", "training_loss_plot.png")
                 forecaster.plot_final_losses("final_losses.csv", "final_losses_plot.png")
@@ -1377,7 +1377,7 @@ def main():
     file_infer_time = datetime.fromtimestamp(os.path.getmtime(PREDICT_FILE))
     
     if True:#datetime.now() - file_infer_time > timedelta(minutes=9):
-        steps_ahead=600
+        steps_ahead=60
         # Use load_master_data to get interpolated, resampled data
         recent_data = forecaster.load_master_data()
         timestamps = pd.to_datetime(recent_data["Timestamp"])  # Already interpolated!
