@@ -186,37 +186,69 @@ Pressure:
         return f"Error generating plant summary: {str(e)}"
 
 def get_weather_summary():
-    """Generate summary of weather station data."""
+    """Generate summary of weather station data, gracefully handling offline sensors."""
     try:
-        # Load weather data
         df = pd.read_csv(WEATHER_DATA_PATH)
         df["Timestamp"] = pd.to_datetime(df["Timestamp"])
-        
-        # Get most recent data and last 24 hours
         df = df.sort_values("Timestamp", ascending=False)
         recent = df.iloc[0]
         last_24h = df[df["Timestamp"] >= (df["Timestamp"].max() - pd.Timedelta(hours=24))]
-        
-        # Calculate statistics
+
+        # Sensor validity — a sensor is live if ≥10% of the last 24h values are real
+        def valid(col):
+            return col in last_24h.columns and last_24h[col].notna().mean() >= 0.10
+
+        dht_temp_valid = valid("DHT_Temperature_C")
+        dht_hum_valid  = valid("DHT_Humidity_percent")
+        bh1750_valid   = valid("BH1750_Light_lx")
+
+        # BMP temperature (always expected to be present)
         bmp_temp_current = recent["BMP_Temperature_C"]
         bmp_temp_max = last_24h["BMP_Temperature_C"].max()
         bmp_temp_min = last_24h["BMP_Temperature_C"].min()
         bmp_temp_avg = last_24h["BMP_Temperature_C"].mean()
-        
-        dht_temp_current = recent["DHT_Temperature_C"]
-        dht_temp_avg = last_24h["DHT_Temperature_C"].mean()
-        
-        humidity_current = recent["DHT_Humidity_percent"]
-        humidity_avg = last_24h["DHT_Humidity_percent"].mean()
-        
+
         pressure_current = recent["BMP_Pressure_hPa"]
         pressure_avg = last_24h["BMP_Pressure_hPa"].mean()
-        
-        light_current = recent["BH1750_Light_lx"]
-        light_avg = last_24h["BH1750_Light_lx"].mean()
-        light_max = last_24h["BH1750_Light_lx"].max()
-        
-        # Create summary text
+
+        # DHT temperature section
+        if dht_temp_valid:
+            dht_temp_current = recent["DHT_Temperature_C"]
+            dht_temp_avg = last_24h["DHT_Temperature_C"].mean()
+            dht_temp_section = (
+                f"DHT Temperature:\n"
+                f"  Current: {format_value(dht_temp_current)}°C ({format_value(dht_temp_current * 9/5 + 32)}°F)\n"
+                f"  24h Avg: {format_value(dht_temp_avg)}°C ({format_value(dht_temp_avg * 9/5 + 32)}°F)\n"
+            )
+        else:
+            dht_temp_section = "DHT Temperature:\n  Sensor Offline\n"
+
+        # Humidity section
+        if dht_hum_valid:
+            humidity_current = recent["DHT_Humidity_percent"]
+            humidity_avg = last_24h["DHT_Humidity_percent"].mean()
+            humidity_section = (
+                f"Humidity:\n"
+                f"  Current: {format_value(humidity_current)}%\n"
+                f"  24h Avg: {format_value(humidity_avg)}%\n"
+            )
+        else:
+            humidity_section = "Humidity:\n  Sensor Offline\n"
+
+        # Light section
+        if bh1750_valid:
+            light_current = recent["BH1750_Light_lx"]
+            light_avg = last_24h["BH1750_Light_lx"].mean()
+            light_max = last_24h["BH1750_Light_lx"].max()
+            light_section = (
+                f"Light Level:\n"
+                f"  Current: {format_value(light_current)} lx\n"
+                f"  24h Max: {format_value(light_max)} lx\n"
+                f"  24h Avg: {format_value(light_avg)} lx\n"
+            )
+        else:
+            light_section = "Light Level:\n  Sensor Offline\n"
+
         summary = f"""
 WEATHER STATION SUMMARY
 ======================
@@ -228,23 +260,13 @@ BMP Temperature:
   24h Min: {format_value(bmp_temp_min)}°C ({format_value(bmp_temp_min * 9/5 + 32)}°F)
   24h Avg: {format_value(bmp_temp_avg)}°C ({format_value(bmp_temp_avg * 9/5 + 32)}°F)
 
-DHT Temperature:
-  Current: {format_value(dht_temp_current)}°C ({format_value(dht_temp_current * 9/5 + 32)}°F)
-  24h Avg: {format_value(dht_temp_avg)}°C ({format_value(dht_temp_avg * 9/5 + 32)}°F)
-
-Humidity:
-  Current: {format_value(humidity_current)}%
-  24h Avg: {format_value(humidity_avg)}%
-
+{dht_temp_section}
+{humidity_section}
 Pressure:
   Current: {format_value(pressure_current)} hPa
   24h Avg: {format_value(pressure_avg)} hPa
 
-Light Level:
-  Current: {format_value(light_current)} lx
-  24h Max: {format_value(light_max)} lx
-  24h Avg: {format_value(light_avg)} lx
-"""
+{light_section}"""
         return summary
     except Exception as e:
         return f"Error generating weather summary: {str(e)}"
