@@ -68,15 +68,7 @@ import torch
 import pandas as pd
 from torchvision.ops import nms
 import psutil
-from pynvml import (
-    nvmlInit,
-    nvmlDeviceGetHandleByIndex,
-    nvmlDeviceGetUtilizationRates,
-    nvmlDeviceGetMemoryInfo,
-    nvmlDeviceGetTemperature,
-    nvmlShutdown,
-)
-from pynvml import *
+
 import warnings
 import bird_detection
 
