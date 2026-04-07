@@ -117,23 +117,38 @@ def load_master_data(fp):
 
 
 
-def generate_json_from_csv(csv_path, json_path):
+def generate_json_from_csv(csv_path, json_path, max_age_hours=3):
     """
-    Convert CSV data to JSON format.
+    Convert CSV data to JSON format, but only if the JSON file is missing
+    or older than max_age_hours.
 
     Args:
         csv_path (str): Path to the source CSV file.
         json_path (str): Path to save the generated JSON file.
+        max_age_hours (int | float): Maximum allowed JSON age before regeneration.
     """
     try:
-        with open(csv_path, "r") as csvfile:
+        # If JSON exists and is younger than max_age_hours, skip rewriting it
+        if os.path.exists(json_path):
+            json_mtime = datetime.fromtimestamp(os.path.getmtime(json_path))
+            json_age = datetime.now() - json_mtime
+
+            if json_age < timedelta(hours=max_age_hours):
+                logging.info(
+                    f"Skipping JSON update for {json_path}; "
+                    f"file age is {json_age}, which is less than {max_age_hours} hours."
+                )
+                return
+
+        with open(csv_path, "r", newline="") as csvfile:
             reader = csv.DictReader(csvfile)
             data = list(reader)
 
         with open(json_path, "w") as jsonfile:
-            json.dump(data, jsonfile, indent=4)
+            json.dump(data, jsonfile, separators=(",", ":"))
 
         logging.info(f"JSON data successfully written to {json_path}")
+
     except Exception as e:
         logging.error(f"Error generating JSON file: {e}")
 
