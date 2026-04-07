@@ -351,45 +351,39 @@ def generate_json_from_csv(csv_path, json_path):
         print(f"Error generating JSON file: {e}")
 
 
+def generate_summary_plot(data, output_path, sensor_flags=None):
+    if sensor_flags is None:
+        sensor_flags = {"dht_humidity": True}
 
-def generate_summary_plot(data, output_path):
-    """Generate a single-panel summary plot for smoothed temperature and humidity."""
     fig, ax_temp_c = plt.subplots(figsize=(10, 6))
-
-    # Plot smoothed temperature (°C) on the primary y-axis (left-hand side)
-    ax_temp_c.plot(data["Timestamp"], data["Median_Temperature_C"], color="purple", alpha=0.7, label="Temperature")
+    ax_temp_c.plot(data["Timestamp"], data["Median_Temperature_C"], color="purple", alpha=0.7, label="Temperature (°C)")
     ax_temp_c.tick_params(axis="y", labelcolor="blue")
 
-    # Add Fahrenheit scale on a secondary left y-axis (stacked with °C)
     ax_temp_f = ax_temp_c.twinx()
-    ax_temp_f.spines["left"].set_position(("axes", 0))#-0.15))  # Offset the Fahrenheit axis
-    ax_temp_f.plot(data["Timestamp"], data["Median_Temperature_C"] * 9 / 5 + 32, color="purple", alpha=0.7, label="Temperature (°F)")
+    ax_temp_f.spines["left"].set_position(("axes", 0))
+    ax_temp_f.plot(data["Timestamp"], data["Median_Temperature_C"] * 9/5 + 32, color="purple", alpha=0.7)
     ax_temp_f.set_ylabel("Temperature (°C/°F)", color="purple")
     ax_temp_f.tick_params(axis="y", labelcolor="red")
     ax_temp_f.yaxis.set_label_position("left")
     ax_temp_f.yaxis.tick_left()
 
-    # Plot smoothed humidity on the right-hand side y-axis
     ax_hum = ax_temp_c.twinx()
     ax_hum.spines["right"].set_visible(True)
-    ax_hum.plot(data["Timestamp"], data["DHT_Humidity_percent_Smoothed"], label="Humidity (%)", color="green", alpha=0.7)
-    ax_hum.set_ylabel("Humidity (%)", color="green")
-    ax_hum.tick_params(axis="y", labelcolor="green")
+    if sensor_flags["dht_humidity"]:
+        ax_hum.plot(data["Timestamp"], data["DHT_Humidity_percent_Smoothed"], label="Humidity (%)", color="green", alpha=0.7)
+        ax_hum.set_ylabel("Humidity (%)", color="green")
+        ax_hum.tick_params(axis="y", labelcolor="green")
+    else:
+        ax_hum.set_visible(False)
+        ax_temp_c.set_title("Summary (DHT offline — humidity unavailable)")
 
-    # Title and legend
     ax_temp_c.legend(loc="upper left")
     ax_hum.legend(loc="upper right")
-
-    # Formatting
     ax_temp_c.xaxis.set_tick_params(rotation=45)
     ax_temp_c.grid(alpha=0.3)
-
-    # Save plot
     plt.tight_layout()
     plt.savefig(output_path)
     plt.close()
-    print(f"\tSaved summary plot to {output_path}.")
-
 
 
 
@@ -654,10 +648,14 @@ def generate_daily_gif_with_plot(image_dir, output_gif, data):
 
             # Add humidity on secondary y-axis
             ax_hum = ax_temp_c.twinx()
-            ax_hum.plot(current_subset["Timestamp"], current_subset["DHT_Humidity_percent_Smoothed"],
-                color="green", alpha=0.8, linewidth=1, label="Humidity (%)")
-            ax_hum.set_ylabel("Humidity (%)", color="green")
-            ax_hum.tick_params(axis="y", labelcolor="green")
+            
+            if sensor_flags and sensor_flags.get("dht_humidity"):
+                ax_hum.plot(subset["Timestamp"], subset["DHT_Humidity_percent_Smoothed"],
+                    color="green", alpha=0.7, label="Humidity (%)")
+                ax_hum.set_ylabel("Humidity (%)", color="green")
+                ax_hum.tick_params(axis="y", labelcolor="green")
+            else:
+                ax_hum.set_visible(False)
 
             # Simplified title
             plot_title = f"24h Data to {mountain_time.strftime('%H:%M')}"
@@ -1126,18 +1124,17 @@ def generate_plots(data, predict_data, output_path, title, out_of_date_flag):
     print(f"\tSaved plot to {output_path}.")
 
 
-def save_last_minute_averages(data, predict_data, output_file):
-    """Save the last 1-minute averages for temperature, humidity, pressure, and light as an HTML file."""
-    # Filter data for the last 1 minute
+def save_last_minute_averages(data, predict_data, output_file, sensor_flags=None):
+    if sensor_flags is None:
+        sensor_flags = {}
     last_minute_data = data[data["Timestamp"] >= (data["Timestamp"].max() - pd.Timedelta(minutes=1))]
 
-    # Calculate averages
     averages = {
         "Temperature (°C/°F)": f"{last_minute_data['Median_Temperature_C'].mean():.2f}°C / {last_minute_data['Median_Temperature_F'].mean():.2f}°F",
-        "Predicted Temp (Hour avg) (°C/°F)": f"{predict_data['Predicted_Temperature'].mean():.2f}°C / {predict_data['Predicted_Temperature'].mean() * 9 / 5 + 32:.2f}°F",
-        "Humidity (%)": last_minute_data["DHT_Humidity_percent"].mean(),
-        "Pressure (kPa)": last_minute_data["BMP_Pressure_hPa"].mean() / 10,
-        "Light (lx)": last_minute_data["BH1750_Light_lx"].mean(),
+        "Predicted Temp (°C/°F)": f"{predict_data['Predicted_Temperature'].mean():.2f}°C / {predict_data['Predicted_Temperature'].mean() * 9/5 + 32:.2f}°F",
+        "Humidity (%)": f"{last_minute_data['DHT_Humidity_percent'].mean():.1f}" if sensor_flags.get("dht_humidity") else "Sensor Offline",
+        "Pressure (kPa)": f"{last_minute_data['BMP_Pressure_hPa'].mean() / 10:.3f}",
+        "Light (lx)": f"{last_minute_data['BH1750_Light_lx'].mean():.1f}" if sensor_flags.get("bh1750") else "Sensor Offline",
     }
 
     # Create a DataFrame
@@ -1687,14 +1684,11 @@ def main():
         #subset = master_data[master_data["Timestamp"] >= master_data["Timestamp"].max() - delta]
         generate_plots(subset, predict_data, f"/media/bigdata/weather_station/weather_plot_{label}.png", f"Weather Data ({label.replace('_', ' ').title()})", out_of_date_flag)
 
-    print("\tGenerating hourly GIF...")
-    generate_hourly_gif_with_plot(IMAGE_DIR, GIF_OUTPUT, master_data)
-    
-    print("\tGenerating daily GIF...")
-    generate_daily_gif_with_plot(IMAGE_DIR, DAY_GIF_OUTPUT, master_data)
+    print("\tGenerating GIFs...")
+    generate_hourly_gif_with_plot(IMAGE_DIR, GIF_OUTPUT, master_data, sensor_flags)
+    generate_daily_gif_with_plot(IMAGE_DIR, DAY_GIF_OUTPUT, master_data, sensor_flags)
 
-
-    generate_summary_plot(master_data, f"/media/bigdata/weather_station/summary_plot.png")
+    generate_summary_plot(master_data, f"/media/bigdata/weather_station/summary_plot.png", sensor_flags)
     #print("\t\tCalculating rolling averages...")
     #calculate_rolling_averages(master_data, time_spans)
     save_last_minute_averages(master_data, predict_data, "/media/bigdata/weather_station/small_summary.html")
