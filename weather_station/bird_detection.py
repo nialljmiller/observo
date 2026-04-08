@@ -29,8 +29,8 @@ def preprocess_image(img):
 # --- Core Functions ---
 def load_models():
     try:
-        model_small = torch.hub.load('ultralytics/yolov5', 'custom', path='yolov5m.pt')
-        model_large = torch.hub.load('ultralytics/yolov5', 'custom', path='yolov5l.pt')
+        model_small = torch.hub.load('ultralytics/yolov5', 'custom', path='yolov5m.pt', skip_validation=True, verbose=False)
+        model_large = torch.hub.load('ultralytics/yolov5', 'custom', path='yolov5l.pt', skip_validation=True, verbose=False)
         return [model_small, model_large]
     except Exception as e:
         logging.error(f"Failed to load models: {e}")
