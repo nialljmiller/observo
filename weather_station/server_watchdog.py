@@ -6,10 +6,35 @@ import os
 import datetime
 import threading
 import logging
+import signal
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
                    
+def run_script_with_timeout(cmd, timeout_seconds):
+    """
+    Run a child script and enforce a hard timeout so the watchdog can recover
+    from hangs (e.g., a processing script blocking on I/O forever).
+    """
+    with subprocess.Popen(cmd, preexec_fn=os.setsid) as proc:
+        try:
+            proc.wait(timeout=timeout_seconds)
+        except subprocess.TimeoutExpired:
+            logging.error(
+                f"Script timed out after {timeout_seconds}s: {' '.join(cmd)}. "
+                "Killing process group and restarting."
+            )
+            os.killpg(proc.pid, signal.SIGTERM)
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait()
+            raise
+
+        if proc.returncode != 0:
+            raise subprocess.CalledProcessError(proc.returncode, cmd)
+
 
 def clean_ram():
     """Attempt to free up memory by running garbage collection."""
@@ -121,13 +146,17 @@ def run_email_alerts():
 
 def run_ingest():
     """Runs the weather ingest script in a loop."""
+    ingest_timeout = 300  # 5 minutes
     while True:
         try:
-            subprocess.run(["python", "server_weather_ingest.py"], check=True)
+            run_script_with_timeout(["python", "server_weather_ingest.py"], ingest_timeout)
             retry_time = 30
         except subprocess.CalledProcessError as e:
             retry_time = 5
             logging.error(f"Ingest script crashed with exit code {e.returncode}. Restarting in {retry_time} seconds...")
+        except subprocess.TimeoutExpired:
+            retry_time = 5
+            logging.error(f"Ingest script exceeded {ingest_timeout}s timeout. Restarting in {retry_time} seconds...")
         except Exception as e:
             retry_time = 5
             logging.error(f"Unexpected error in ingest script: {e}. Restarting in {retry_time} seconds...")
@@ -187,9 +216,10 @@ def plant_ingest():
 
 def run_processing():
     """Runs the weather processing script in a loop."""
+    processing_timeout = 1800  # 30 minutes
     while True:
         try:
-            subprocess.run(["python", "server_weather_processing.py"], check=True)
+            run_script_with_timeout(["python", "server_weather_processing.py"], processing_timeout)
             proc_retry_time = 120
 
             current_time = datetime.datetime.now()
@@ -205,6 +235,12 @@ def run_processing():
         except subprocess.CalledProcessError as e:
             proc_retry_time = 5
             logging.error(f"Processing script crashed with exit code {e.returncode}. Restarting in {proc_retry_time} seconds...")
+        except subprocess.TimeoutExpired:
+            proc_retry_time = 5
+            logging.error(
+                f"Processing script exceeded {processing_timeout}s timeout. "
+                f"Restarting in {proc_retry_time} seconds..."
+            )
         except Exception as e:
             proc_retry_time = 5
             logging.error(f"Unexpected error in processing script: {e}. Restarting in {proc_retry_time} seconds...")
