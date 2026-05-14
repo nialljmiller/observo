@@ -162,16 +162,25 @@ def append_new_data(master_data):
         logging.warning(f"{INCOMING_FILE} is not a text/csv file. Detected type: {file_type}")
         return master_data
 
+    
     try:
-        with open(INCOMING_FILE, "r+") as f:
-            fcntl.flock(f, fcntl.LOCK_EX)
-            incoming_data = pd.read_csv(f, encoding="utf-8", on_bad_lines="skip")
-            f.seek(0)
-            f.truncate()
-            fcntl.flock(f, fcntl.LOCK_UN)
+            with open(INCOMING_FILE, "r+") as f:
+                fcntl.flock(f, fcntl.LOCK_EX)
+                content = f.read()
+                f.seek(0)
+                f.truncate()
+                fcntl.flock(f, fcntl.LOCK_UN)
+    
+            if not content.strip():
+                logging.info("Incoming file is empty. Nothing to ingest.")
+                return master_data
+    
+            incoming_data = pd.read_csv(
+                __import__("io").StringIO(content),
+                encoding="utf-8",
+                on_bad_lines="skip"
+            )
 
-        incoming_data["Timestamp"] = pd.to_datetime(incoming_data["Timestamp"], errors="coerce")
-        incoming_data = incoming_data.dropna(subset=["Timestamp"])
     except Exception as e:
         logging.error(f"Error loading incoming data: {e}")
         return master_data
