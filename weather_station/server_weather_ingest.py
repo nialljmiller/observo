@@ -152,17 +152,7 @@ def generate_json_from_csv(csv_path, json_path, max_age_hours=3):
     except Exception as e:
         logging.error(f"Error generating JSON file: {e}")
 
-
 def append_new_data(master_data):
-    """
-    Append new weather data from the incoming file to the master DataFrame.
-
-    Args:
-        master_data (pd.DataFrame): Existing master data.
-
-    Returns:
-        pd.DataFrame: Updated master data.
-    """
     if not os.path.exists(INCOMING_FILE):
         logging.warning(f"Incoming file {INCOMING_FILE} does not exist. Skipping this iteration.")
         return master_data
@@ -179,37 +169,43 @@ def append_new_data(master_data):
             f.seek(0)
             f.truncate()
             fcntl.flock(f, fcntl.LOCK_UN)
-    
+
         incoming_data["Timestamp"] = pd.to_datetime(incoming_data["Timestamp"], errors="coerce")
         incoming_data = incoming_data.dropna(subset=["Timestamp"])
-    except pd.errors.EmptyDataError:
-        return master_data  # File was empty (truncated, Pi hasn't written yet) — totally normal
     except Exception as e:
         logging.error(f"Error loading incoming data: {e}")
         return master_data
 
-    # Ensure timestamps are timezone-aware and converted to UTC
+    if incoming_data.empty:
+        return master_data
+
     if incoming_data["Timestamp"].dt.tz is None:
         incoming_data["Timestamp"] = incoming_data["Timestamp"].dt.tz_localize("UTC")
     else:
         incoming_data["Timestamp"] = incoming_data["Timestamp"].dt.tz_convert("UTC")
 
-    if master_data["Timestamp"].dt.tz is None:
-        master_data["Timestamp"] = master_data["Timestamp"].dt.tz_localize("UTC")
-    else:
-        master_data["Timestamp"] = master_data["Timestamp"].dt.tz_convert("UTC")
+    # Read only the tail of the master file for dedup — not the full thing
+    try:
+        tail = pd.read_csv(MASTER_FILE, on_bad_lines="skip")
+        tail["Timestamp"] = pd.to_datetime(tail["Timestamp"], errors="coerce")
+        if tail["Timestamp"].dt.tz is None:
+            tail["Timestamp"] = tail["Timestamp"].dt.tz_localize("UTC")
+        cutoff = incoming_data["Timestamp"].min()
+        existing_ts = set(tail[tail["Timestamp"] >= cutoff]["Timestamp"].dropna())
+    except Exception as e:
+        logging.error(f"Error reading master tail for dedup: {e}")
+        existing_ts = set()
 
-    # Concatenate and remove duplicates
-    combined_data = pd.concat([master_data, incoming_data], ignore_index=True)
-    combined_data = combined_data.drop_duplicates(subset="Timestamp").sort_values("Timestamp").reset_index(drop=True)
+    new_rows = incoming_data[~incoming_data["Timestamp"].isin(existing_ts)]
 
-    # Save updated master data and generate corresponding JSON
-    #combined_data.to_csv(MASTER_FILE, index=False)
-    safe_write_csv(combined_data, MASTER_FILE)
-    generate_json_from_csv(MASTER_FILE, MASTER_FILE_JSON)
-    logging.info(f"Appended new data and saved to {MASTER_FILE}. Total rows: {len(combined_data)}.")
+    if new_rows.empty:
+        logging.info("No new rows to append.")
+        return master_data
 
-    return combined_data
+    new_rows.to_csv(MASTER_FILE, mode='a', header=False, index=False)
+    logging.info(f"Appended {len(new_rows)} new rows to {MASTER_FILE}.")
+
+    return master_data
 
 
 def initialize_csv(output_file="system_stats.csv"):
