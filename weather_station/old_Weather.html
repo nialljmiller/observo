@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Weather Station Data</title>
+    <link rel="stylesheet" type="text/css" href="styles.css">
+    <style>
+        /* General Page Styling */
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+
+        h1, h2 {
+            text-align: center;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+
+        table, th, td {
+            border: 1px solid black;
+        }
+
+        th, td {
+            padding: 10px;
+            text-align: center;
+        }
+
+        img {
+            display: block;
+            margin: 20px auto;
+            max-width: 100%;
+        }
+
+        .text-block {
+            text-align: center;
+            margin: 10px 0;
+        }
+
+        .link-block {
+            text-align: center;
+            margin: 20px 0;
+        }
+
+    
+    .textbox {
+        margin: 20px auto;
+        padding: 20px;
+        max-width: 800px;
+        text-align: left;
+        border: 2px solid #0073e6;
+        border-radius: 8px;
+        background-image: url('background.png'); /* Path to your image */
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        font-size: 16px;
+        line-height: 1.8;
+    }
+
+    .textbox p {
+        margin-bottom: 15px;
+    }
+
+    .textbox strong {
+        color: #0073e6;
+    }
+
+    .textbox a {
+        color: #0073e6;
+        text-decoration: none;
+    }
+
+    .textbox a:hover {
+        text-decoration: underline;
+    }
+
+    .textbox ul {
+        margin: 10px 0;
+        padding: 0 20px;
+        list-style-type: disc;
+    }
+
+    .textbox ul li {
+        margin-bottom: 10px;
+    }
+
+
+    </style>
+    
+
+    <style>
+    .container {
+    display: flex;
+    justify-content: space-between; /* Aligns children (flex items) space between */
+    }
+
+    .download-links, .query-form {
+    flex-basis: 48%; /* Each child takes up 48% of the container width, allowing some space between */
+    }
+
+    @media (max-width: 900px) {
+    .container {
+    flex-direction: column; /* Stacks the flex items vertically on smaller screens */
+    }
+
+    .download-links, .query-form {
+    flex-basis: auto; /* Allows the children to take the necessary space */
+    }
+    }
+    </style>
+
+
+    <style>
+    /* Specific styles for this downloads section */
+    .downloads-section {
+    display: flex;
+    flex-direction: column; /* Stack children vertically */
+    align-items: center; /* Center items horizontally */
+    text-align: center; /* Center the text content */
+    }
+
+    .downloads-section img {
+    max-width: 100%; /* Make the image responsive */
+    height: auto; /* Maintain aspect ratio */
+    margin-bottom: 20px; /* Space between the image and the text/link section */
+    margin-left: 10px; /* Space between the image and the text/link section */
+    }
+
+    /* Styles for the download links */
+    .downloads-section .download-links ul {
+    list-style: none; /* No bullets */
+    padding: 0; /* No padding */
+    margin: 0; /* No margin */
+    }
+
+    .downloads-section .download-links a {
+    display: inline-block;
+    margin: 5px;
+    padding: 8px 16px;
+    background-color: #007bff;
+    color: #ffffff;
+    text-decoration: none;
+    border-radius: 5px;
+    }
+    </style>
+
+ <style>
+    .images-section img {
+        max-width: 1500px;
+        width: 100%;
+        height: auto;
+        display: block;
+        margin: 0 auto; /* Centers the images */
+    }
+</style>
+   
+    
+</head>
+<body>
+
+<script>
+    async function loadsmallAverages() {
+        try {
+            const response = await fetch('/bigdata/weather_station/small_summary.html');
+            if (!response.ok) throw new Error('Network response was not ok');
+            const html = await response.text();
+            document.getElementById('small-averages').innerHTML = html;
+        } catch (error) {
+            console.error('Error loading small averages:', error);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadsmallAverages);
+</script>
+
+<script>
+    async function loadRollingAverages() {
+        try {
+            const response = await fetch('/bigdata/weather_station/rolling_averages.html');
+            if (!response.ok) throw new Error('Network response was not ok');
+            const html = await response.text();
+            document.getElementById('rolling-averages').innerHTML = html;
+        } catch (error) {
+            console.error('Error loading rolling averages:', error);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadRollingAverages);
+</script>
+
+<h1>Weather Station Data</h1>
+<div class="textbox">
+    <div id="small-averages"></div>
+</div>
+
+<a href="Plants.html">Plants!</a>
+<h2>Weather Plots</h2>
+
+<div class="images-section">
+    <img src="/bigdata/weather_station/hourly_timelapse.gif" alt="Outside GIF. (May take a second to load...)">
+    <img src="/bigdata/weather_station/weather_plot_1_hour.png" alt="Weather Plot - Last Hour">
+    <img src="/bigdata/weather_station/weather_plot_1_day.png" alt="Weather Plot - Last Day">
+    <img src="/bigdata/weather_station/weather_plot_1_week.png" alt="Weather Plot - Last Day">
+    <img src="/bigdata/weather_station/weather_plot_1_month.png" alt="Weather Plot - Last Day">    
+    <img src="/bigdata/weather_station/images/latest.jpg" alt="Last Image" style="transform: rotate(180deg);">
+
+    <img src="/bigdata/weather_station/daily_timelapse.gif" alt="Outside GIF. (May take a second to load...)">
+</div>
+
+<div class="textbox">
+    <p>This setup uses three sensors connected to a Raspberry Pi to measure different aspects of the environment:</p>
+    <ul>
+        <li>
+            <strong>Barometric Pressure Sensor (BMP085):</strong> This sensor measures air pressure, which can be used to detect changes in the weather. Higher pressure often means clear skies, while lower pressure can indicate storms or rain. It also calculates altitude by comparing the measured pressure to sea-level pressure, giving an idea of how high the sensor is above sea level.
+        </li>
+        <li>
+            <strong>Temperature and Humidity Sensor (DHT11):</strong> The DHT11 measures the air temperature and the amount of moisture in the air (humidity). Temperature readings show how warm or cold it is, and humidity helps describe how dry or damp the air feels. Together, these measurements can describe the comfort level or provide context for other weather data.
+        </li>
+        <li>
+            <strong>Light Sensor (BH1750):</strong> The BH1750 measures the brightness of the environment in lux, a unit of light intensity. This helps track how bright or dark it is, which could depend on the time of day, weather conditions like cloud cover, or changes in the surroundings.
+        </li>
+    </ul>
+    <p>Each sensor collects data every 10 seconds.</p>
+    <p>The data is sent to the server every 30 seconds.</p>    
+    <p>The server processes a new plot every minute.</p>    
+    <p>The server retrains the RNN once a day.</p>        
+
+    <p>
+        <a href="https://github.com/nialljmiller/weather_station" target="_blank">https://github.com/nialljmiller/weather_station</a>
+    </p>
+    
+    
+        <div class="downloads-section">
+     
+      <div id="othersection-with-bg">
+
+        <ul class="download-links">
+          <a href="/bigdata/weather_station/all_data.csv" download>Download all weather data</a>
+
+        </ul>
+      </div>
+    </div>
+
+<div class="link-block">
+    <a href="image_viewer.html" target="_blank">View all images</a>
+    <a href="bird_image_viewer.html" target="_blank">View bird images</a>
+</div>
+
+
+<div class="link-block">
+    <a href="training.html" target="_blank">View Training Stats</a>
+</div>
+
+
+<form action="subscribe.php" method="post">
+	  <h3>Subscribe to weather updates</h3>
+	    <input type="email" name="email" required placeholder="Your email address">
+	      <button type="submit">Subscribe</button>
+</form>
+
+
+</div>
+
+</body>
+</html>
+

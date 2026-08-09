@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Plant Station Data</title>
+    <link rel="stylesheet" type="text/css" href="styles.css">
+    <style>
+        /* General Page Styling */
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            line-height: 1.6;
+        }
+
+        h1, h2 {
+            text-align: center;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+
+        table, th, td {
+            border: 1px solid black;
+        }
+
+        th, td {
+            padding: 10px;
+            text-align: center;
+        }
+
+        img {
+            display: block;
+            margin: 20px auto;
+            max-width: 100%;
+        }
+
+        .text-block {
+            text-align: center;
+            margin: 10px 0;
+        }
+
+        .link-block {
+            text-align: center;
+            margin: 20px 0;
+        }
+
+    
+    .textbox {
+        margin: 20px auto;
+        padding: 20px;
+        max-width: 800px;
+        text-align: left;
+        border: 2px solid #0073e6;
+        border-radius: 8px;
+        background-image: url('background.png'); /* Path to your image */
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        font-size: 16px;
+        line-height: 1.8;
+    }
+
+    .textbox p {
+        margin-bottom: 15px;
+    }
+
+    .textbox strong {
+        color: #0073e6;
+    }
+
+    .textbox a {
+        color: #0073e6;
+        text-decoration: none;
+    }
+
+    .textbox a:hover {
+        text-decoration: underline;
+    }
+
+    .textbox ul {
+        margin: 10px 0;
+        padding: 0 20px;
+        list-style-type: disc;
+    }
+
+    .textbox ul li {
+        margin-bottom: 10px;
+    }
+
+
+    </style>
+    
+
+    <style>
+    .container {
+    display: flex;
+    justify-content: space-between; /* Aligns children (flex items) space between */
+    }
+
+    .download-links, .query-form {
+    flex-basis: 48%; /* Each child takes up 48% of the container width, allowing some space between */
+    }
+
+    @media (max-width: 900px) {
+    .container {
+    flex-direction: column; /* Stacks the flex items vertically on smaller screens */
+    }
+
+    .download-links, .query-form {
+    flex-basis: auto; /* Allows the children to take the necessary space */
+    }
+    }
+    </style>
+
+
+    <style>
+    /* Specific styles for this downloads section */
+    .downloads-section {
+    display: flex;
+    flex-direction: column; /* Stack children vertically */
+    align-items: center; /* Center items horizontally */
+    text-align: center; /* Center the text content */
+    }
+
+    .downloads-section img {
+    max-width: 100%; /* Make the image responsive */
+    height: auto; /* Maintain aspect ratio */
+    margin-bottom: 20px; /* Space between the image and the text/link section */
+    margin-left: 10px; /* Space between the image and the text/link section */
+    }
+
+    /* Styles for the download links */
+    .downloads-section .download-links ul {
+    list-style: none; /* No bullets */
+    padding: 0; /* No padding */
+    margin: 0; /* No margin */
+    }
+
+    .downloads-section .download-links a {
+    display: inline-block;
+    margin: 5px;
+    padding: 8px 16px;
+    background-color: #007bff;
+    color: #ffffff;
+    text-decoration: none;
+    border-radius: 5px;
+    }
+    </style>
+
+ <style>
+    .images-section img {
+        max-width: 1500px;
+        width: 100%;
+        height: auto;
+        display: block;
+        margin: 0 auto; /* Centers the images */
+    }
+</style>
+   
+    
+</head>
+<body>
+
+<script>
+    async function loadsmallAverages() {
+        try {
+            const response = await fetch('/bigdata/weather_station/small_summary.html');
+            if (!response.ok) throw new Error('Network response was not ok');
+            const html = await response.text();
+            document.getElementById('small-averages').innerHTML = html;
+        } catch (error) {
+            console.error('Error loading small averages:', error);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadsmallAverages);
+</script>
+
+<script>
+    async function loadRollingAverages() {
+        try {
+            const response = await fetch('/bigdata/weather_station/rolling_averages.html');
+            if (!response.ok) throw new Error('Network response was not ok');
+            const html = await response.text();
+            document.getElementById('rolling-averages').innerHTML = html;
+        } catch (error) {
+            console.error('Error loading rolling averages:', error);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadRollingAverages);
+</script>
+
+<h1>Plant Station Data</h1>
+
+<div class="images-section">
+<h2>Hour</h2>
+<img src="/bigdata/plant_station/last_1h_plant_plot.png" alt="Plant Plot - All Data">
+<h2>Day</h2>
+<img src="/bigdata/plant_station/last_24h_plant_plot.png" alt="Plant Plot - All Data">
+<h2>Week</h2>
+<img src="/bigdata/plant_station/last_week_plant_plot.png" alt="Plant Plot - All Data">
+<h2>Month</h2>
+<img src="/bigdata/plant_station/last_month_plant_plot.png" alt="Plant Plot - All Data">
+<h2>Year</h2>
+<img src="/bigdata/plant_station/last_year_plant_plot.png" alt="Plant Plot - All Data">
+
+
+<h2>Camera</h2>
+<img src="/bigdata/plant_station/images/latest.jpg" alt="Plant Images">
+
+
+
+<h2>We measure temperature, pressure, and humidity simultaneously. We can represent each measurement as a point in a three-dimensional Euclidean space. In our current dataset, all points lie on a planar manifold defined by the inherent relationships among these variables (PV ∝ NT).</h2>
+<img src="/bigdata/plant_station/3D_rotation.gif" alt="Plant Plot - planar manifold">
+
+</div>
+</body>
+</html>
+

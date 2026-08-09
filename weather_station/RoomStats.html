@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Weather Station Data</title>
+    <link rel="stylesheet" type="text/css" href="styles.css">
+    <style>
+        /* Style for the page */
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+        }
+
+        h1, h2 {
+            text-align: center;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 20px;
+        }
+
+        table, th, td {
+            border: 1px solid black;
+        }
+
+        th, td {
+            padding: 10px;
+            text-align: center;
+        }
+
+        img {
+            display: block;
+            margin: 20px auto;
+            max-width: 100%;
+        }
+
+        .text-block {
+            text-align: center;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Weather Station Data</h1>
+
+    <h2>Weather Plots</h2>
+    <div class="text-block">Plot showing last 10 minutes</div>
+    <img src="/media/bigdata/weather_station/weather_plot_10_minutes.png" alt="Weather Plot - Last 10 Minutes">
+    <div class="text-block">Plot showing last hour</div>
+    <img src="/media/bigdata/weather_station/weather_plot_1_hour.png" alt="Weather Plot - Last Hour">
+    <div class="text-block">Plot showing last day</div>
+    <img src="/media/bigdata/weather_station/weather_plot_1_day.png" alt="Weather Plot - Last Day">
+    <div class="text-block">Plot showing all data</div>
+    <img src="/media/bigdata/weather_station/weather_plot_all.png" alt="Weather Plot - All Data">
+
+
+<script>
+    async function loadRollingAverages() {
+        try {
+            const response = await fetch('/media/bigdata/weather_station/rolling_averages.html');
+            if (!response.ok) throw new Error('Network response was not ok');
+            const html = await response.text();
+            document.getElementById('rolling-averages').innerHTML = html;
+        } catch (error) {
+            console.error('Error loading rolling averages:', error);
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', loadRollingAverages);
+</script>
+
+<h2>Rolling Averages</h2>
+<div id="rolling-averages">
+    <!-- Content from rolling_averages.html will be injected here -->
+</div>
+</body>
+</html>
+

@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Weather Station Image Gallery</title>
+  <link rel="stylesheet" type="text/css" href="styles.css">
+  <style>
+    .gallery {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+      gap: 15px;
+      max-width: 1600px;
+      margin: auto;
+      text-align: center;
+    }
+
+    .gallery img {
+      width: 100%;
+      height: auto;
+      cursor: pointer;
+      border-radius: 5px;
+      transition: transform 0.2s;
+      transform: rotate(180deg);
+    }
+
+    .gallery img:hover {
+      transform: scale(1.05) rotate(180deg);
+    }
+
+    .filename {
+      font-size: 18px;
+      margin-top: 8px;
+    }
+
+    #lightbox {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.8);
+      justify-content: center;
+      align-items: center;
+    }
+
+    #lightbox img {
+      max-width: 90%;
+      max-height: 90%;
+      border-radius: 5px;
+      transform: rotate(180deg);
+    }
+  </style>
+</head>
+<body>
+  <h1>Weather Station Image Gallery</h1>
+  <div class="gallery" id="gallery"></div>
+<div id="pagination"></div>
+
+  <div id="lightbox" onclick="closeLightbox()">
+    <img id="lightbox-img" src="" alt="Expanded View">
+  </div>
+
+<script>
+  const imageDir = "/media/bigdata/weather_station/images";
+  let currentPage = 1;
+  const imagesPerPage = 50;
+  let allImages = [];
+
+  function convertUTCToMountain(utcString) {
+    let parts = utcString.split("_");
+    if (parts.length !== 2) return utcString;
+
+    let datePart = parts[0];
+    let timePart = parts[1];
+
+    let year = parseInt(datePart.slice(0, 4));
+    let month = parseInt(datePart.slice(4, 6));
+    let day = parseInt(datePart.slice(6, 8));
+    let hour = parseInt(timePart.slice(0, 2));
+    let minute = parseInt(timePart.slice(2, 4));
+    let second = parseInt(timePart.slice(4, 6));
+
+    let utcDate = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+
+    const dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Denver",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    });
+
+    let partsArr = dtf.formatToParts(utcDate);
+    let formatted = {};
+    partsArr.forEach(({ type, value }) => {
+      formatted[type] = value;
+    });
+
+    return `${formatted.year}-${formatted.month}-${formatted.day} ${formatted.hour}:${formatted.minute}:${formatted.second}`;
+  }
+
+  function formatFilename(file) {
+    let base = file.replace(".jpg", "");
+    return convertUTCToMountain(base);
+  }
+
+  async function loadImages() {
+    let response = await fetch(imageDir);
+    if (!response.ok) return console.error("Failed to load image directory");
+
+    let images = await response.text();
+    let imageFiles = images.match(/\d{8}_\d{6}\.jpg/g);
+    if (!imageFiles) return;
+
+    allImages = [...new Set(imageFiles)].reverse(); // Remove duplicates and reverse order
+    renderPage(currentPage);
+  }
+
+  function renderPage(page) {
+    let gallery = document.getElementById("gallery");
+    gallery.innerHTML = "";
+
+    let start = (page - 1) * imagesPerPage;
+    let end = start + imagesPerPage;
+    let imagesToShow = allImages.slice(start, end);
+
+    imagesToShow.forEach(file => {
+      let container = document.createElement("div");
+      container.classList.add("image-container");
+
+      let img = document.createElement("img");
+      img.src = `${imageDir}/${file}`;
+      img.alt = file;
+      img.onclick = () => openLightbox(img.src);
+
+      let caption = document.createElement("div");
+      caption.classList.add("filename");
+      caption.innerText = formatFilename(file);
+
+      container.appendChild(img);
+      container.appendChild(caption);
+      gallery.appendChild(container);
+    });
+
+    updatePagination();
+  }
+
+  function updatePagination() {
+    let pagination = document.getElementById("pagination");
+    pagination.innerHTML = "";
+
+    let totalPages = Math.ceil(allImages.length / imagesPerPage);
+
+    if (currentPage > 1) {
+      let prevButton = document.createElement("button");
+      prevButton.innerText = "Previous";
+      prevButton.onclick = () => changePage(currentPage - 1);
+      pagination.appendChild(prevButton);
+    }
+
+    let pageIndicator = document.createElement("span");
+    pageIndicator.innerText = ` Page ${currentPage} of ${totalPages} `;
+    pagination.appendChild(pageIndicator);
+
+    if (currentPage < totalPages) {
+      let nextButton = document.createElement("button");
+      nextButton.innerText = "Next";
+      nextButton.onclick = () => changePage(currentPage + 1);
+      pagination.appendChild(nextButton);
+    }
+  }
+
+  function changePage(newPage) {
+    if (newPage < 1 || newPage > Math.ceil(allImages.length / imagesPerPage)) return;
+    currentPage = newPage;
+    renderPage(currentPage);
+  }
+
+  function openLightbox(src) {
+    document.getElementById("lightbox-img").src = src;
+    document.getElementById("lightbox").style.display = "flex";
+  }
+
+  function closeLightbox() {
+    document.getElementById("lightbox").style.display = "none";
+  }
+
+  loadImages();
+</script>
+
+</body>
+</html>

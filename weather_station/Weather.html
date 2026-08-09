@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Weather Station Data</title>
+    <style>
+        * { box-sizing: border-box; }
+
+        body {
+            font-family: "Times New Roman", Times, serif;
+            background-color: #b8d4a8;
+            color: #1a1a1a;
+            margin: 0;
+            padding: 0;
+            font-size: 14pt;
+            line-height: 1.6;
+        }
+
+        a { color: #2a5e1e; font-weight: bold; }
+        a:visited { color: #5e3a7e; }
+        a:hover { color: #000; background-color: #d4eac4; }
+
+        /* ===== WRAPPER ===== */
+        .site-wrapper {
+            width: 100%;
+            max-width: 5000px;
+            margin: 18px auto;
+            background-color: #cde3be;
+            border: 3px ridge #4a7a3a;
+        }
+
+        /* ===== HEADER ===== */
+        .page-header {
+            background-color: #3a6a2a;
+            color: #fff;
+            padding: 14px 22px;
+            border-bottom: 3px solid #2a5a1a;
+            text-align: center;
+        }
+
+        .page-header h1 {
+            margin: 0;
+            font-size: 26pt;
+            letter-spacing: 1px;
+        }
+
+        .page-header p {
+            margin: 4px 0 0 0;
+            font-size: 11pt;
+            color: #cde3be;
+            font-style: italic;
+        }
+
+        /* ===== SECTION BARS ===== */
+        .section-bar {
+            background-color: #5a8a4a;
+            color: #fff;
+            padding: 5px 12px;
+            font-weight: bold;
+            font-size: 13pt;
+            border-top: 2px solid #3a6a2a;
+            border-bottom: 2px solid #3a6a2a;
+        }
+
+        /* ===== SUMMARY BOX ===== */
+        .summary-box {
+            margin: 16px 18px;
+            padding: 14px 18px;
+            border: 2px inset #8ab87a;
+            background-color: #dcefd0;
+            font-size: 12pt;
+        }
+
+        /* ===== PLOTS SECTION ===== */
+        .plots-section {
+            padding: 0 18px 18px 18px;
+        }
+
+        .plots-section img {
+            display: block;
+            width: 100%;
+            max-width: 100%;
+            height: auto;
+            margin: 10px auto;
+            border: 2px solid #4a7a3a;
+        }
+
+        /* ===== INFO CARD ===== */
+        .info-card {
+            margin: 0 18px 18px 18px;
+            padding: 14px 18px;
+            border: 2px outset #a0c090;
+            background-color: #dcefd0;
+            font-size: 12pt;
+        }
+
+        .info-card ul {
+            margin: 10px 0;
+            padding-left: 22px;
+        }
+
+        .info-card ul li {
+            margin-bottom: 10px;
+        }
+
+        .info-card p {
+            margin: 6px 0;
+        }
+
+        /* ===== DATA SPEC TABLE ===== */
+        .spec-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 12px 0 4px 0;
+            font-size: 11pt;
+        }
+
+        .spec-table td {
+            border: 1px solid #6a9a5a;
+            padding: 6px 12px;
+        }
+
+        .spec-table td:first-child {
+            background-color: #c8e0b8;
+            font-weight: bold;
+            width: 55%;
+        }
+
+        /* ===== LINKS ROW ===== */
+        .links-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 12px 18px;
+            padding: 10px 14px;
+            border: 2px outset #a0c090;
+            background-color: #dcefd0;
+        }
+
+        .links-row a {
+            display: inline-block;
+            border: 2px outset #c0c0c0;
+            background-color: #e8f0e0;
+            padding: 5px 12px;
+            font-family: "Courier New", Courier, monospace;
+            font-size: 10pt;
+            text-decoration: none;
+            color: #2a5e1e;
+        }
+
+        .links-row a:hover {
+            border-style: inset;
+            background-color: #c8e0b8;
+        }
+
+        /* ===== SUBSCRIBE FORM ===== */
+        .subscribe-block {
+            margin: 0 18px 18px 18px;
+            padding: 14px 18px;
+            border: 2px inset #8ab87a;
+            background-color: #dcefd0;
+        }
+
+        .subscribe-block h3 {
+            margin: 0 0 10px 0;
+            font-size: 13pt;
+            color: #2a4e1a;
+            border-bottom: 1px solid #8ab87a;
+            padding-bottom: 4px;
+        }
+
+        .subscribe-block input[type="email"] {
+            padding: 5px 10px;
+            font-size: 11pt;
+            border: 2px inset #a0c090;
+            background-color: #f0f8ea;
+            font-family: "Courier New", Courier, monospace;
+            width: 260px;
+        }
+
+        .subscribe-block button {
+            padding: 5px 14px;
+            margin-left: 8px;
+            font-size: 11pt;
+            border: 2px outset #a0c090;
+            background-color: #c8e0b8;
+            cursor: pointer;
+            font-family: "Times New Roman", Times, serif;
+        }
+
+        .subscribe-block button:hover {
+            border-style: inset;
+            background-color: #b0d0a0;
+        }
+
+        /* ===== FOOTER ===== */
+        .page-footer {
+            background-color: #5a8a4a;
+            color: #e8f0e0;
+            text-align: center;
+            padding: 7px 12px;
+            font-size: 10pt;
+            border-top: 2px solid #3a6a2a;
+        }
+
+        .page-footer a {
+            color: #d4eac4;
+        }
+    </style>
+
+    <script>
+        async function loadSmallAverages() {
+            try {
+                const response = await fetch('/bigdata/weather_station/small_summary.html');
+                if (!response.ok) throw new Error('Network response was not ok');
+                const html = await response.text();
+                document.getElementById('small-averages').innerHTML = html;
+            } catch (error) {
+                console.error('Error loading small averages:', error);
+            }
+        }
+
+        async function loadRollingAverages() {
+            try {
+                const response = await fetch('/bigdata/weather_station/rolling_averages.html');
+                if (!response.ok) throw new Error('Network response was not ok');
+                const html = await response.text();
+                document.getElementById('rolling-averages').innerHTML = html;
+            } catch (error) {
+                console.error('Error loading rolling averages:', error);
+            }
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadSmallAverages();
+            loadRollingAverages();
+        });
+    </script>
+</head>
+<body>
+<div class="site-wrapper">
+
+    <!-- HEADER -->
+    <div class="page-header">
+        <h1>Weather Station Data</h1>
+        <p>Laramie, Wyoming &mdash; Live sensor readings updated every minute</p>
+    </div>
+
+    <!-- CURRENT CONDITIONS -->
+    <div class="section-bar">&#9670; Current Conditions</div>
+    <div class="summary-box">
+        <div id="small-averages"></div>
+    </div>
+
+    <!-- PLOTS -->
+    <div class="section-bar">&#9670; Weather Plots</div>
+    <div class="plots-section">
+        <img src="/bigdata/weather_station/hourly_timelapse.gif" alt="Hourly timelapse (may take a moment to load)">
+        <img src="/bigdata/weather_station/weather_plot_1_hour.png" alt="Weather Plot &mdash; Last Hour">
+        <img src="/bigdata/weather_station/weather_plot_1_day.png" alt="Weather Plot &mdash; Last Day">
+        <img src="/bigdata/weather_station/weather_plot_1_week.png" alt="Weather Plot &mdash; Last Week">
+        <img src="/bigdata/weather_station/weather_plot_1_month.png" alt="Weather Plot &mdash; Last Month">
+        <img src="/bigdata/weather_station/images/latest.jpg" alt="Latest Camera Image" style="transform: rotate(180deg);">
+        <img src="/bigdata/weather_station/daily_timelapse.gif" alt="Daily timelapse (may take a moment to load)">
+    </div>
+
+    <!-- ABOUT THE SETUP -->
+    <div class="section-bar">&#9670; About This Setup</div>
+    <div class="info-card">
+        <p>Three sensors connected to a Raspberry Pi measure different aspects of the local environment:</p>
+        <ul>
+            <li><strong>Barometric Pressure (BMP085)</strong> &mdash; Measures air pressure to detect weather changes. Higher pressure indicates clear skies; lower pressure suggests storms or rain. Also estimates altitude relative to sea level.</li>
+            <li><strong>Temperature &amp; Humidity (DHT11)</strong> &mdash; Measures air temperature and moisture content. Together these describe comfort level and provide context for other weather readings.</li>
+            <li><strong>Light Sensor (BH1750)</strong> &mdash; Measures ambient brightness in lux, tracking daylight, cloud cover, and changes in surroundings.</li>
+        </ul>
+
+        <table class="spec-table">
+            <tr><td>Sensor sampling interval</td><td>Every 10 seconds</td></tr>
+            <tr><td>Data sent to server</td><td>Every 30 seconds</td></tr>
+            <tr><td>Plots regenerated</td><td>Every minute</td></tr>
+            <tr><td>RNN retraining</td><td>Once daily</td></tr>
+        </table>
+
+        <p style="margin-top: 12px;">Source code: <a href="https://github.com/nialljmiller/weather_station" target="_blank">github.com/nialljmiller/weather_station</a></p>
+    </div>
+
+    <!-- LINKS -->
+    <div class="section-bar">&#9670; Data &amp; Images</div>
+    <div class="links-row">
+        <a href="/bigdata/weather_station/all_data.csv" download>&#8595; Download all weather data (.csv)</a>
+        <a href="image_viewer.html" target="_blank">&#9654; View all images</a>
+        <a href="bird_image_viewer.html" target="_blank">&#9654; View bird images</a>
+        <a href="training.html" target="_blank">&#9654; View training stats</a>
+    </div>
+
+    <!-- SUBSCRIBE -->
+    <div class="section-bar">&#9670; Subscribe</div>
+    <div class="subscribe-block">
+        <h3>Subscribe to weather updates</h3>
+        <form action="subscribe.php" method="post">
+            <input type="email" name="email" required placeholder="Your email address">
+            <button type="submit">Subscribe</button>
+        </form>
+    </div>
+
+    <div class="page-footer">
+        <a href="index.html">&#8592; Back to nialljmiller.com</a>
+    </div>
+
+</div>
+</body>
+</html>
