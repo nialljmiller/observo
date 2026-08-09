@@ -34,13 +34,61 @@
             color: #fff;
             padding: 14px 22px;
             border-bottom: 3px solid #2a5a1a;
-            text-align: center;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 28px;
+        }
+
+        .header-title {
+            text-align: left;
+        }
+
+        .current-temperature {
+            margin-left: auto;
+            text-align: right;
+            white-space: nowrap;
+        }
+
+        .current-temperature .temp-label {
+            display: block;
+            font-size: 10pt;
+            color: #cde3be;
+            font-style: italic;
+            margin-bottom: 1px;
+        }
+
+        .current-temperature .temp-main {
+            font-size: 27pt;
+            font-weight: bold;
+            line-height: 1.05;
+        }
+
+        .current-temperature .temp-f {
+            font-size: 17pt;
+            line-height: 1.2;
+            color: #e8f0e0;
+        }
+
+        @media (max-width: 650px) {
+            .page-header {
+                align-items: flex-start;
+            }
+
+            .current-temperature .temp-main {
+                font-size: 22pt;
+            }
+
+            .current-temperature .temp-f {
+                font-size: 14pt;
+            }
         }
 
         .page-header h1 {
             margin: 0;
             font-size: 26pt;
             letter-spacing: 1px;
+            text-align: left;
         }
 
         .page-header p {
@@ -48,6 +96,7 @@
             font-size: 11pt;
             color: #cde3be;
             font-style: italic;
+            text-align: left;
         }
 
         /* ===== SECTION BARS ===== */
@@ -210,29 +259,41 @@
     <script>
         async function loadSmallAverages() {
             try {
-                const response = await fetch('/bigdata/weather_station/small_summary.html');
+                const response = await fetch('/bigdata/weather_station/small_summary.html', { cache: 'no-store' });
                 if (!response.ok) throw new Error('Network response was not ok');
                 const html = await response.text();
                 document.getElementById('small-averages').innerHTML = html;
+
+                // small_summary.html contains a row labelled "Temperature".
+                // Use that same value for the large header display.
+                const doc = new DOMParser().parseFromString(html, 'text/html');
+                let temperatureText = '';
+
+                for (const row of doc.querySelectorAll('tr')) {
+                    const heading = row.querySelector('th');
+                    const value = row.querySelector('td');
+                    if (heading && value && heading.textContent.trim().toLowerCase() === 'temperature') {
+                        temperatureText = value.textContent.trim();
+                        break;
+                    }
+                }
+
+                const cMatch = temperatureText.match(/(-?\d+(?:\.\d+)?)\s*°?\s*C/i);
+                const fMatch = temperatureText.match(/(-?\d+(?:\.\d+)?)\s*°?\s*F/i);
+
+                if (cMatch) {
+                    const c = Number(cMatch[1]);
+                    const f = fMatch ? Number(fMatch[1]) : (c * 9 / 5 + 32);
+                    document.getElementById('current-temp-c').textContent = `${c.toFixed(1)} °C`;
+                    document.getElementById('current-temp-f').textContent = `${f.toFixed(1)} °F`;
+                }
             } catch (error) {
                 console.error('Error loading small averages:', error);
             }
         }
-
-        async function loadRollingAverages() {
-            try {
-                const response = await fetch('/bigdata/weather_station/rolling_averages.html');
-                if (!response.ok) throw new Error('Network response was not ok');
-                const html = await response.text();
-                document.getElementById('rolling-averages').innerHTML = html;
-            } catch (error) {
-                console.error('Error loading rolling averages:', error);
-            }
-        }
-
         document.addEventListener('DOMContentLoaded', () => {
             loadSmallAverages();
-            loadRollingAverages();
+            setInterval(loadSmallAverages, 60000);
         });
     </script>
 </head>
@@ -241,8 +302,15 @@
 
     <!-- HEADER -->
     <div class="page-header">
-        <h1>Weather Station Data</h1>
-        <p>Laramie, Wyoming &mdash; Live sensor readings updated every minute</p>
+        <div class="header-title">
+            <h1>Weather Station</h1>
+            <p>Carrboro, North Carolina</p>
+        </div>
+        <div class="current-temperature" aria-label="Current temperature">
+            <span class="temp-label">Current temperature</span>
+            <div class="temp-main" id="current-temp-c">--.- °C</div>
+            <div class="temp-f" id="current-temp-f">--.- °F</div>
+        </div>
     </div>
 
     <!-- CURRENT CONDITIONS -->
@@ -259,25 +327,25 @@
         <img src="/bigdata/weather_station/weather_plot_1_day.png" alt="Weather Plot &mdash; Last Day">
         <img src="/bigdata/weather_station/weather_plot_1_week.png" alt="Weather Plot &mdash; Last Week">
         <img src="/bigdata/weather_station/weather_plot_1_month.png" alt="Weather Plot &mdash; Last Month">
-        <img src="/bigdata/weather_station/images/latest.jpg" alt="Latest Camera Image" style="transform: rotate(180deg);">
+        <img src="/bigdata/weather_station/images/latest.jpg" alt="Latest Camera Image">
         <img src="/bigdata/weather_station/daily_timelapse.gif" alt="Daily timelapse (may take a moment to load)">
     </div>
 
     <!-- ABOUT THE SETUP -->
     <div class="section-bar">&#9670; About This Setup</div>
     <div class="info-card">
-        <p>Three sensors connected to a Raspberry Pi measure different aspects of the local environment:</p>
+        <p>A Raspberry Pi records the local weather conditions and camera images:</p>
         <ul>
-            <li><strong>Barometric Pressure (BMP085)</strong> &mdash; Measures air pressure to detect weather changes. Higher pressure indicates clear skies; lower pressure suggests storms or rain. Also estimates altitude relative to sea level.</li>
-            <li><strong>Temperature &amp; Humidity (DHT11)</strong> &mdash; Measures air temperature and moisture content. Together these describe comfort level and provide context for other weather readings.</li>
-            <li><strong>Light Sensor (BH1750)</strong> &mdash; Measures ambient brightness in lux, tracking daylight, cloud cover, and changes in surroundings.</li>
+            <li><strong>Temperature &amp; Humidity (DHT22 / AM2302)</strong> &mdash; Measures ambient air temperature and relative humidity.</li>
+            <li><strong>Camera (OV5647)</strong> &mdash; Captures the site in daylight and low light using adaptive day, twilight, and night imaging.</li>
+            <li><strong>Barometric Pressure</strong> &mdash; A pressure sensor will be added; the data pipeline already has separate fields for pressure and its temperature measurement.</li>
         </ul>
 
         <table class="spec-table">
-            <tr><td>Sensor sampling interval</td><td>Every 10 seconds</td></tr>
-            <tr><td>Data sent to server</td><td>Every 30 seconds</td></tr>
-            <tr><td>Plots regenerated</td><td>Every minute</td></tr>
-            <tr><td>RNN retraining</td><td>Once daily</td></tr>
+            <tr><td>DHT22 polling interval</td><td>Every 5 seconds</td></tr>
+            <tr><td>Weather data block</td><td>Every 30 seconds</td></tr>
+            <tr><td>Data sent to server</td><td>Every 5 minutes</td></tr>
+            <tr><td>Forecast model</td><td>Enabled after sufficient new station data are collected</td></tr>
         </table>
 
         <p style="margin-top: 12px;">Source code: <a href="https://github.com/nialljmiller/weather_station" target="_blank">github.com/nialljmiller/weather_station</a></p>
