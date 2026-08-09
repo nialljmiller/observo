@@ -1,0 +1,115 @@
+/* Global Styles */
+body {
+    font-family: Arial, sans-serif;
+    background-color: #bfdab4;
+    text-align: center;
+    margin: 20px;
+}
+
+/* Table Styles */
+table {
+    width: 100%;
+}
+
+td {
+    padding: 10px;
+}
+
+/* Header Styles */
+h1 {
+    font-size: 48px;
+}
+
+h2 {
+    font-size: 30px;
+        max-width: 100%; /* Ensure the image doesn't exceed its container */
+    background-color: #88ac79;
+}
+
+h3 {
+    font-size: 30px;
+}
+
+/* Paragraph Styles */
+p {
+    font-size: 20px;
+}
+
+papertext {
+    font-size: 15px;
+}
+
+
+/* Image Styles */
+img {
+    border: 1px solid #000;
+}
+
+/* Horizontal Rule Styles */
+hr {
+    border: 1px solid #000;
+}
+
+/* Footer Styles */
+footer {
+    font-size: 12px;
+    background-color: #88ac79;
+}
+
+/* Box Shadow Example */
+#my-element {
+    box-shadow: 3px 3px 5px rgba(0, 0, 0, 0.3); /* Offset X, Offset Y, Blur Radius, Color */
+}
+
+/* Text Shadow Example */
+.text-shadowed {
+    text-shadow: 2px 2px 2px rgba(1, 1, 1, 1); /* Horizontal Offset, Vertical Offset, Blur Radius, Color */
+}
+
+/* Section with Background Image Styles */
+#section-with-bg {
+    background-image: url('/var/www/html/pics/VVVbackground.jpg'); /* Replace 'background.jpg' with your background image file */
+    background-size: cover; /* Scale the image to cover the entire section */
+    background-repeat: no-repeat; /* Prevent the image from repeating */
+    padding: 10px; /* Add some padding to improve readability */
+    color: #fff; /* Set text color to white or a suitable color for contrast */
+}
+
+
+
+
+
+/* Style for the list of papers */
+.paper-list {
+    list-style: none; /* Remove default list bullets */
+    display: flex; /* Use flexbox to arrange items horizontally */
+    flex-wrap: wrap; /* Allow items to wrap to the next line if needed */
+}
+
+/* Style for each paper item */
+.paper-item {
+    width: 100%; /* Each item takes up 50% of the container's width, two items per row */
+    display: flex; /* Use flexbox for internal arrangement */
+    margin-bottom: 20px; /* Add margin for spacing between items */
+}
+
+/* Style for the paper image */
+.paper-item img {
+    max-width: 100%; /* Ensure the image doesn't exceed its container */
+    margin-right: 50px; /* Add margin for spacing between image and text */
+}
+
+/* Style for paper titles and blurbs */
+.paper-item h3, .paper-item p {
+    margin: 0px; /* Remove any default margin */
+}
+
+
+.paper-blurb {
+    text-align: left;
+    font-style: italic;
+}
+
+
+
+

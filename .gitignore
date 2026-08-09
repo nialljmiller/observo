@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Editor/backup files
+*~
+*.backup_*
+.DS_Store
+
+# Logs / runtime state
+*.log
+.server_weather_ingest.lock
+config/log/
+
+# Generated data
+/*.csv
+/*.json
+
+# Generated plots / imagery
+/*.png
+/*.gif
+/images/
+
+# Models / large weights
+/*.pt
+/*.pth
+
+# Explicit runtime files
+datetime.txt
+last_daily_summary.txt
+processed_images.json
