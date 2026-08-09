@@ -1,29 +1,30 @@
 #!/usr/bin/env python3
-"""
-Weather Forecaster — simple LSTM, sklearn scalers, same public API as before.
+"""Temperature forecaster for the current Tempestas/Observo schema.
+
+The model predicts ``Ambient_Temperature_C`` from recent ambient temperature
+and relative humidity.  Pressure is deliberately not a required feature so the
+model remains usable while the pressure sensor is absent and does not silently
+substitute fabricated pressure values.
 """
 
-import os
 import csv
 import logging
-from datetime import datetime, timedelta
+import os
+from datetime import timedelta
 
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
-
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import Dataset, DataLoader
 from sklearn.preprocessing import StandardScaler
+from torch.utils.data import DataLoader, Dataset
 
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 
+DEFAULT_FEATURE_COLS = ["Ambient_Temperature_C", "DHT22_Humidity_percent"]
+DEFAULT_TARGET_COL = "Ambient_Temperature_C"
 
-# ---------------------------------------------------------------------------
-# Model
-# ---------------------------------------------------------------------------
 
 class _LSTMNet(nn.Module):
     def __init__(self, input_dim, hidden_dim, num_layers, output_dim, dropout):
@@ -38,13 +39,9 @@ class _LSTMNet(nn.Module):
         self.fc = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x):
-        out, _ = self.lstm(x)          # (batch, seq, hidden)
-        return self.fc(out[:, -1, :])  # (batch, output_dim)
+        out, _ = self.lstm(x)
+        return self.fc(out[:, -1, :])
 
-
-# ---------------------------------------------------------------------------
-# Dataset
-# ---------------------------------------------------------------------------
 
 class _SeqDataset(Dataset):
     def __init__(self, data: np.ndarray, seq_length: int, target_col: int):
@@ -53,7 +50,7 @@ class _SeqDataset(Dataset):
         self.target_col = target_col
 
     def __len__(self):
-        return len(self.data) - self.seq_length
+        return max(0, len(self.data) - self.seq_length)
 
     def __getitem__(self, idx):
         x = self.data[idx : idx + self.seq_length]
@@ -64,46 +61,22 @@ class _SeqDataset(Dataset):
         )
 
 
-# ---------------------------------------------------------------------------
-# Forecaster
-# ---------------------------------------------------------------------------
-
 class WeatherForecaster:
-    """
-    Simple LSTM-based weather forecaster.
-
-    Feature columns (passed to __init__ as feature_cols):
-        default → ["DHT_Humidity_percent", "BMP_Temperature_C", "BMP_Pressure_hPa"]
-
-    Target column (passed as target_col):
-        default → "BMP_Temperature_C"
-
-    Public API is backward-compatible with the previous version:
-        train_model / save_model / load_model
-        load_master_data
-        predict_future / infer_timestamps / save_predictions_to_csv
-        plot_training_loss / plot_final_losses
-    """
+    """LSTM forecaster using the new canonical station measurements."""
 
     def __init__(
         self,
         master_file: str = None,
         data: pd.DataFrame = None,
-        # Model hyper-parameters
-        hidden_dim: int = 128,
+        hidden_dim: int = 96,
         num_layers: int = 2,
-        dropout: float = 0.2,
-        # Training
+        dropout: float = 0.15,
         learning_rate: float = 1e-3,
-        batch_size: int = 256,
-        # Sequence
-        seq_length: int = 500,
-        # Features
+        batch_size: int = 128,
+        seq_length: int = 120,
         feature_cols: list = None,
-        target_col: str = "BMP_Temperature_C",
-        # Misc
+        target_col: str = DEFAULT_TARGET_COL,
         device=None,
-        # Legacy positional args (ignored but accepted for compatibility)
         input_dim=None,
         output_dim=None,
         target_seq_length=None,
@@ -115,28 +88,26 @@ class WeatherForecaster:
         self.learning_rate = learning_rate
         self.batch_size = batch_size
         self.device = device or torch.device("cpu")
-        
-        self.feature_cols = feature_cols or [
-            "DHT_Humidity_percent",
-            "BMP_Temperature_C",
-            "BMP_Pressure_hPa",
-        ]
+        self.feature_cols = list(feature_cols or DEFAULT_FEATURE_COLS)
         self.target_col = target_col
 
-        # Load & pre-process data
-        raw = data if data is not None else self.load_master_data()
+        if self.target_col not in self.feature_cols:
+            raise ValueError(
+                f"target_col {self.target_col!r} must be present in feature_cols"
+            )
+
+        raw = data.copy() if data is not None else self.load_master_data()
+        raw = self._prepare_feature_frame(raw)
+        if len(raw) < 3:
+            raise ValueError("Not enough valid weather rows to initialize forecaster")
+
         self._fit_scalers(raw)
         self._scaled = self._scale(raw)
-
-        # seq_length must be < len(data) so at least one training sample exists
-        self.seq_length = min(seq_length, len(self._scaled) - 1)
+        self.seq_length = min(int(seq_length), len(self._scaled) - 1)
+        if self.seq_length < 2:
+            raise ValueError("Not enough rows for a forecast sequence")
         self._target_idx = self.feature_cols.index(self.target_col)
-
         self._build_model()
-
-    # ------------------------------------------------------------------
-    # Internal helpers
-    # ------------------------------------------------------------------
 
     def _build_model(self):
         self.model = _LSTMNet(
@@ -149,125 +120,163 @@ class WeatherForecaster:
         self.criterion = nn.HuberLoss(delta=1.0)
         self.optimizer = optim.Adam(self.model.parameters(), lr=self.learning_rate)
         self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
-            self.optimizer, mode="min", factor=0.5, patience=3
+            self.optimizer, mode="min", factor=0.5, patience=4
         )
 
+    def _prepare_feature_frame(self, df: pd.DataFrame) -> pd.DataFrame:
+        missing = [c for c in self.feature_cols if c not in df.columns]
+        if missing:
+            raise ValueError(f"Missing forecast feature column(s): {missing}")
+
+        out = df.copy()
+        for col in self.feature_cols:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+        out = out.dropna(subset=self.feature_cols).reset_index(drop=True)
+        return out
+
     def _fit_scalers(self, df: pd.DataFrame):
-        """Fit one StandardScaler per feature column."""
         self.scalers = {}
         for col in self.feature_cols:
-            s = StandardScaler()
-            valid = df[col].dropna().values.reshape(-1, 1)
-            s.fit(valid)
-            self.scalers[col] = s
+            scaler = StandardScaler()
+            scaler.fit(df[[col]].to_numpy(dtype=np.float64))
+            self.scalers[col] = scaler
 
     def _scale(self, df: pd.DataFrame) -> np.ndarray:
-        """Return scaled numpy array, shape (N, n_features)."""
         cols = []
         for col in self.feature_cols:
-            vals = df[col].values.reshape(-1, 1).astype(np.float32)
-            vals = np.nan_to_num(vals, nan=0.0)
+            vals = df[[col]].to_numpy(dtype=np.float32)
             cols.append(self.scalers[col].transform(vals))
-        arr = np.hstack(cols).astype(np.float32)
-        return arr
+        return np.hstack(cols).astype(np.float32)
 
     def _scale_raw(self, arr: np.ndarray) -> np.ndarray:
-        """Scale a raw (N, n_features) numpy array using stored scalers."""
+        if arr.ndim != 2 or arr.shape[1] != len(self.feature_cols):
+            raise ValueError(
+                f"Expected array of shape (N, {len(self.feature_cols)}), got {arr.shape}"
+            )
+        if not np.isfinite(arr).all():
+            raise ValueError("Forecast input contains NaN or infinite values")
+
         out = np.empty_like(arr, dtype=np.float32)
         for i, col in enumerate(self.feature_cols):
-            col_vals = np.nan_to_num(arr[:, i].reshape(-1, 1), nan=0.0)
-            out[:, i] = self.scalers[col].transform(col_vals).ravel()
+            out[:, i] = self.scalers[col].transform(arr[:, [i]]).ravel()
         return out
 
     def _inv_scale_target(self, scaled_vals: np.ndarray) -> np.ndarray:
-        """Inverse-scale predicted target values back to original units."""
         return self.scalers[self.target_col].inverse_transform(
             scaled_vals.reshape(-1, 1)
         ).ravel()
 
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
     def load_master_data(self) -> pd.DataFrame:
+        """Load canonical data, resample to one minute, and fill only short gaps.
+
+        Timestamps are parsed as UTC.  Interpolation is limited to ten minutes;
+        longer outages are left missing and then excluded rather than being
+        turned into invented weather.
         """
-        Load, resample to 1-minute, interpolate gaps ≤ 2 h, return DataFrame.
-        """
-        df = pd.read_csv(self.master_file, on_bad_lines="skip")
-        df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce")
-        df = df.dropna(subset=["Timestamp"]).sort_values("Timestamp").reset_index(drop=True)
-        df = df.set_index("Timestamp").resample("1min").mean()
-        max_gap = pd.Timedelta("2H")
-        limit = int(max_gap / pd.Timedelta("1min"))
-        df = df.interpolate(method="time", limit=limit, limit_direction="both").dropna()
-        return df.reset_index()
+        if not self.master_file or not os.path.exists(self.master_file):
+            raise FileNotFoundError(self.master_file or "master_file not specified")
+
+        df = pd.read_csv(self.master_file, on_bad_lines="warn")
+        if "Timestamp" not in df.columns:
+            raise ValueError("Master weather data has no Timestamp column")
+
+        df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce", utc=True)
+        df = df.dropna(subset=["Timestamp"]).sort_values("Timestamp")
+
+        missing = [c for c in self.feature_cols if c not in df.columns]
+        if missing:
+            raise ValueError(f"Master weather data missing forecast columns: {missing}")
+
+        numeric = df[self.feature_cols].apply(pd.to_numeric, errors="coerce")
+        numeric.index = pd.DatetimeIndex(df["Timestamp"])
+        numeric = numeric.resample("1min").mean()
+        numeric = numeric.interpolate(
+            method="time", limit=10, limit_direction="both", limit_area="inside"
+        )
+        numeric = numeric.dropna(subset=self.feature_cols)
+        return numeric.reset_index().rename(columns={"index": "Timestamp"})
 
     def train_model(
         self,
-        epochs: int = 10,
+        epochs: int = 25,
         loss_csv_path: str = "training_loss.csv",
         final_loss_csv_path: str = "final_losses.csv",
     ):
         dataset = _SeqDataset(self._scaled, self.seq_length, self._target_idx)
-        loader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
-        epoch_loss = 0.0
+        if len(dataset) < 1:
+            raise ValueError("Not enough sequence samples to train forecast model")
+
+        loader = DataLoader(
+            dataset,
+            batch_size=min(self.batch_size, len(dataset)),
+            shuffle=True,
+        )
+        final_epoch_loss = np.nan
 
         with open(loss_csv_path, "w", newline="") as f:
             writer = csv.writer(f)
             writer.writerow(["Epoch", "Loss"])
-
-            for epoch in range(epochs):
+            for epoch in range(int(epochs)):
                 self.model.train()
-                epoch_loss = 0.0
+                total_loss = 0.0
+                batches = 0
                 for bx, by in loader:
                     bx, by = bx.to(self.device), by.to(self.device)
                     self.optimizer.zero_grad()
-                    pred = self.model(bx).squeeze()
+                    pred = self.model(bx).squeeze(-1)
                     loss = self.criterion(pred, by)
                     loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=5.0)
                     self.optimizer.step()
-                    epoch_loss += loss.item()
+                    total_loss += loss.item()
+                    batches += 1
 
-                epoch_loss /= len(loader)
-                logging.info(f"Epoch [{epoch+1}/{epochs}]  loss={epoch_loss:.8f}")
-                writer.writerow([epoch + 1, epoch_loss])
-                self.scheduler.step(epoch_loss)
+                final_epoch_loss = total_loss / max(1, batches)
+                logging.info(
+                    "Forecast epoch %d/%d loss=%.8f",
+                    epoch + 1,
+                    epochs,
+                    final_epoch_loss,
+                )
+                writer.writerow([epoch + 1, final_epoch_loss])
+                self.scheduler.step(final_epoch_loss)
 
         with open(final_loss_csv_path, "a", newline="") as f:
-            csv.writer(f).writerow([epoch_loss])
+            csv.writer(f).writerow([final_epoch_loss])
 
-    def predict_future(self, recent_sequence: np.ndarray, steps_ahead: int = 6) -> np.ndarray:
-        """
-        Predict `steps_ahead` future temperature values.
+    def predict_future(self, recent_sequence: np.ndarray, steps_ahead: int = 60) -> np.ndarray:
+        """Autoregressively predict future ambient temperature values."""
+        raw = np.asarray(recent_sequence, dtype=np.float32).copy()
+        if len(raw) < self.seq_length:
+            raise ValueError(
+                f"Need at least {self.seq_length} recent rows; received {len(raw)}"
+            )
+        raw = raw[-self.seq_length :]
+        if not np.isfinite(raw).all():
+            raise ValueError("Recent forecast sequence contains missing values")
 
-        `recent_sequence` — raw (unscaled) array of shape (seq_length, n_features),
-        columns in the same order as self.feature_cols.
-        """
         self.model.eval()
-        raw = recent_sequence.copy().astype(np.float32)
-
         predictions = []
-        for _ in range(steps_ahead):
+        for _ in range(int(steps_ahead)):
             scaled = self._scale_raw(raw)
             tensor = torch.tensor(scaled, dtype=torch.float32).unsqueeze(0).to(self.device)
-
             with torch.no_grad():
                 scaled_pred = self.model(tensor).item()
-
-            # Back to original scale
-            temp_pred = self._inv_scale_target(np.array([scaled_pred]))[0]
+            temp_pred = float(self._inv_scale_target(np.array([scaled_pred]))[0])
             predictions.append(temp_pred)
 
-            # Advance window: copy last row, update target column, drop oldest
+            # For exogenous variables (currently humidity), persistence is used.
+            # Only the predicted target temperature is advanced.
             next_row = raw[-1].copy()
             next_row[self._target_idx] = temp_pred
             raw = np.vstack((raw[1:], next_row))
 
-        return np.array(predictions)
+        return np.asarray(predictions)
 
     def save_model(self, model_path: str):
         torch.save(
             {
+                "schema_version": 2,
                 "model_state_dict": self.model.state_dict(),
                 "optimizer_state_dict": self.optimizer.state_dict(),
                 "hidden_dim": self.hidden_dim,
@@ -281,33 +290,41 @@ class WeatherForecaster:
             },
             model_path,
         )
-        logging.info(f"Model saved to {model_path}")
+        logging.info("Forecast model saved to %s", model_path)
 
     def load_model(self, model_path: str):
         ckpt = torch.load(model_path, map_location=self.device)
-        self.hidden_dim = ckpt.get("hidden_dim", self.hidden_dim)
-        self.num_layers = ckpt.get("num_layers", self.num_layers)
-        self.dropout = ckpt.get("dropout", self.dropout)
-        self.learning_rate = ckpt.get("learning_rate", self.learning_rate)
-        self.seq_length = ckpt.get("seq_length", self.seq_length)
-        self.feature_cols = ckpt.get("feature_cols", self.feature_cols)
-        self.target_col = ckpt.get("target_col", self.target_col)
+        ckpt_features = ckpt.get("feature_cols")
+        ckpt_target = ckpt.get("target_col")
+        if ckpt.get("schema_version") != 2:
+            raise ValueError("Forecast checkpoint is from the old weather schema")
+        if ckpt_features != self.feature_cols or ckpt_target != self.target_col:
+            raise ValueError(
+                "Forecast checkpoint feature schema does not match current model: "
+                f"checkpoint={ckpt_features}/{ckpt_target}, "
+                f"current={self.feature_cols}/{self.target_col}"
+            )
+
+        self.hidden_dim = ckpt["hidden_dim"]
+        self.num_layers = ckpt["num_layers"]
+        self.dropout = ckpt["dropout"]
+        self.learning_rate = ckpt["learning_rate"]
+        self.seq_length = ckpt["seq_length"]
         self.scalers = ckpt["scalers"]
         self._target_idx = self.feature_cols.index(self.target_col)
         self._build_model()
         self.model.load_state_dict(ckpt["model_state_dict"])
-        self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
-        logging.info(f"Model loaded from {model_path}")
-
-    # ------------------------------------------------------------------
-    # Static helpers (unchanged interface)
-    # ------------------------------------------------------------------
+        try:
+            self.optimizer.load_state_dict(ckpt["optimizer_state_dict"])
+        except Exception as exc:
+            logging.warning("Could not restore optimizer state: %s", exc)
+        logging.info("Forecast model loaded from %s", model_path)
 
     @staticmethod
     def infer_timestamps(last_timestamp, steps_ahead: int, interval_seconds: float):
         return [
             last_timestamp + timedelta(seconds=interval_seconds * i)
-            for i in range(1, steps_ahead + 1)
+            for i in range(1, int(steps_ahead) + 1)
         ]
 
     @staticmethod
@@ -315,7 +332,7 @@ class WeatherForecaster:
         pd.DataFrame(
             {"Timestamp": future_timestamps, "Predicted_Temperature": predictions}
         ).to_csv(output_file, index=False)
-        logging.info(f"Predictions saved to {output_file}")
+        logging.info("Predictions saved to %s", output_file)
 
     @staticmethod
     def plot_training_loss(file_path="training_loss.csv", output_path="training_loss_plot.png"):
@@ -323,22 +340,18 @@ class WeatherForecaster:
             df = pd.read_csv(file_path)
             if df.empty:
                 return
-            creation_date = datetime.fromtimestamp(os.path.getmtime(file_path)).strftime("%Y-%m-%d")
-            plt.figure(figsize=(8, 6))
-            plt.plot(df["Epoch"], df["Loss"], marker="o")
-            plt.title(f"Training Loss Per Epoch (file: {creation_date})")
-            plt.xlabel("Epoch")
-            plt.ylabel("Loss")
-            plt.yscale("log")
-            plt.grid(True, which="both", linestyle="--", linewidth=0.5)
-            plt.tight_layout()
-            plt.savefig(output_path)
-            plt.close()
-            logging.info(f"Training loss plot saved to {output_path}")
-        except FileNotFoundError:
-            logging.warning(f"{file_path} not found.")
-        except Exception as e:
-            logging.error(f"plot_training_loss: {e}")
+            fig, ax = __import__("matplotlib.pyplot", fromlist=["plt"]).subplots(figsize=(8, 6))
+            ax.plot(df["Epoch"], df["Loss"], marker="o")
+            ax.set_title("Forecast training loss")
+            ax.set_xlabel("Epoch")
+            ax.set_ylabel("Huber loss")
+            ax.set_yscale("log")
+            ax.grid(True, which="both", linestyle="--", linewidth=0.5)
+            fig.tight_layout()
+            fig.savefig(output_path)
+            __import__("matplotlib.pyplot", fromlist=["plt"]).close(fig)
+        except Exception as exc:
+            logging.warning("plot_training_loss failed: %s", exc)
 
     @staticmethod
     def plot_final_losses(file_path="final_losses.csv", output_path="final_losses_plot.png"):
@@ -347,18 +360,16 @@ class WeatherForecaster:
                 losses = [float(row[0]) for row in csv.reader(f) if row]
             if not losses:
                 return
-            plt.figure(figsize=(8, 6))
-            plt.plot(range(1, len(losses) + 1), losses, marker="o", color="blue")
-            plt.yscale("log")
-            plt.title("Final Losses Across Runs")
-            plt.xlabel("Run")
-            plt.ylabel("Loss (log scale)")
-            plt.grid(axis="y", linestyle="--", alpha=0.7)
-            plt.tight_layout()
-            plt.savefig(output_path)
-            plt.close()
-            logging.info(f"Final losses plot saved to {output_path}")
-        except FileNotFoundError:
-            logging.warning(f"{file_path} not found.")
-        except Exception as e:
-            logging.error(f"plot_final_losses: {e}")
+            plt = __import__("matplotlib.pyplot", fromlist=["plt"])
+            fig, ax = plt.subplots(figsize=(8, 6))
+            ax.plot(range(1, len(losses) + 1), losses, marker="o")
+            ax.set_yscale("log")
+            ax.set_title("Final forecast loss across runs")
+            ax.set_xlabel("Run")
+            ax.set_ylabel("Huber loss")
+            ax.grid(axis="y", linestyle="--", alpha=0.7)
+            fig.tight_layout()
+            fig.savefig(output_path)
+            plt.close(fig)
+        except Exception as exc:
+            logging.warning("plot_final_losses failed: %s", exc)
