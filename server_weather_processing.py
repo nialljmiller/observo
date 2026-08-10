@@ -103,32 +103,46 @@ def generate_json_from_data(data: pd.DataFrame, path: str) -> None:
     _safe_atomic_text_write(path, json.dumps(records, separators=(",", ":")))
 
 
-def _sensor_valid(series: pd.Series, min_count: int = 1, min_frac: float = 0.10) -> bool:
-    if series is None or len(series) == 0:
+def _sensor_current(
+    df: pd.DataFrame,
+    column: str,
+    *,
+    max_age: str = "2min",
+    window: str = "15min",
+    min_count: int = 2,
+) -> bool:
+    """Return True only when a sensor has produced genuinely recent data.
+
+    This intentionally measures *current* health rather than the fraction of valid
+    values in several hours of history.  A failed sensor therefore goes offline
+    quickly, and a recovered sensor comes back online after a couple of good rows.
+    """
+    if df.empty or column not in df.columns:
         return False
-    valid_count = int(series.notna().sum())
-    return valid_count >= min_count and series.notna().mean() >= min_frac
+
+    latest_stream = df["Timestamp"].max()
+    recent = df[df["Timestamp"] >= latest_stream - pd.Timedelta(window)]
+    values = pd.to_numeric(recent[column], errors="coerce")
+    valid_mask = values.notna()
+    if int(valid_mask.sum()) < min_count:
+        return False
+
+    last_valid = recent.loc[valid_mask, "Timestamp"].max()
+    return (latest_stream - last_valid) <= pd.Timedelta(max_age)
 
 
 def check_sensor_validity(df: pd.DataFrame) -> dict:
-    # Recent data matters more than ancient history for deciding whether a sensor
-    # is currently usable.  Fall back to all data until six hours exist.
-    if df.empty:
-        recent = df
-    else:
-        cutoff = df["Timestamp"].max() - pd.Timedelta(hours=6)
-        recent = df[df["Timestamp"] >= cutoff]
-        if len(recent) < 3:
-            recent = df
-
     flags = {
-        "ambient_temp": _sensor_valid(recent.get("Ambient_Temperature_C")),
-        "dht22_temp": _sensor_valid(recent.get("DHT22_Temperature_C")),
-        "dht22_humidity": _sensor_valid(recent.get("DHT22_Humidity_percent")),
-        "pressure_temp": _sensor_valid(recent.get("PressureSensor_Temperature_C")),
-        "pressure": _sensor_valid(recent.get("Pressure_hPa")),
-        "pressure_altitude": _sensor_valid(recent.get("Pressure_Altitude_m")),
-        "camera_lux": _sensor_valid(recent.get("Camera_Lux")),
+        "ambient_temp": _sensor_current(df, "Ambient_Temperature_C"),
+        "dht22_temp": _sensor_current(df, "DHT22_Temperature_C"),
+        "dht22_humidity": _sensor_current(df, "DHT22_Humidity_percent"),
+        "pressure_temp": _sensor_current(df, "PressureSensor_Temperature_C"),
+        "pressure": _sensor_current(df, "Pressure_hPa"),
+        "pressure_altitude": _sensor_current(df, "Pressure_Altitude_m"),
+        # Camera captures are much less frequent than weather rows.
+        "camera_lux": _sensor_current(
+            df, "Camera_Lux", max_age="15min", window="30min", min_count=1
+        ),
     }
     flags["dht22"] = flags["dht22_temp"] and flags["dht22_humidity"]
 
@@ -517,8 +531,8 @@ def save_last_minute_averages(data, predict_data, output_file, flags):
     if recent.empty:
         recent = data.tail(1)
 
-    temp_c = recent["Ambient_Temperature_C"].mean()
-    temp_f = temp_c * 9 / 5 + 32
+    temp_c = pd.to_numeric(recent["Ambient_Temperature_C"], errors="coerce").mean()
+    temp_f = temp_c * 9 / 5 + 32 if np.isfinite(temp_c) else np.nan
     humidity = recent["DHT22_Humidity_percent"].mean() if flags["dht22_humidity"] else np.nan
     pressure = recent["Pressure_hPa"].mean() if flags["pressure"] else np.nan
     lux = recent["Camera_Lux_Recent"].mean() if recent["Camera_Lux_Recent"].notna().any() else np.nan
@@ -529,7 +543,7 @@ def save_last_minute_averages(data, predict_data, output_file, flags):
 
     rows = [
         ("Updated", local_time.strftime("%Y-%m-%d %H:%M:%S %Z")),
-        ("Temperature", f"{temp_c:.2f} °C / {temp_f:.2f} °F"),
+        ("Temperature", f"{temp_c:.2f} °C / {temp_f:.2f} °F" if np.isfinite(temp_c) else "Unavailable — DHT22 offline"),
         ("Humidity", f"{humidity:.1f} %" if np.isfinite(humidity) else "Unavailable"),
         ("Pressure", f"{pressure:.2f} hPa" if np.isfinite(pressure) else "Unavailable"),
         ("Camera light", f"{lux:.1f} lx" if np.isfinite(lux) else "Unavailable"),
@@ -867,12 +881,46 @@ def main():
         return 0
 
     flags = check_sensor_validity(master_data)
-    if not flags["ambient_temp"]:
-        logging.error("Ambient temperature is unavailable; refusing to produce misleading plots")
-        return 1
 
+    # Derivation is NaN-safe, so keep the server products alive even if an
+    # environmental sensor is temporarily unavailable.
     master_data = derive_metrics(master_data, flags)
     generate_json_from_data(master_data[WEATHER_COLUMNS], MASTER_FILE_JSON)
+
+    if not flags["ambient_temp"]:
+        logging.warning(
+            "Ambient temperature is currently unavailable; preserving the last "
+            "valid weather plots while continuing ingestion and health products"
+        )
+        empty_predictions = pd.DataFrame(
+            columns=["Timestamp", "Predicted_Temperature"]
+        )
+        try:
+            save_last_minute_averages(
+                master_data,
+                empty_predictions,
+                os.path.join(BASE_DIR, "small_summary.html"),
+                flags,
+            )
+        except Exception as exc:
+            logging.warning("Could not update degraded weather summary: %s", exc)
+        try:
+            save_latest_copy(IMAGE_DIR)
+        except Exception as exc:
+            logging.warning("save_latest_copy failed during degraded mode: %s", exc)
+        try:
+            plot_system_stats()
+        except Exception as exc:
+            logging.warning("plot_system_stats failed during degraded mode: %s", exc)
+        try:
+            plot_pi_system_stats()
+        except Exception as exc:
+            logging.warning("plot_pi_system_stats failed during degraded mode: %s", exc)
+        logging.info(
+            "Processing cycle completed in degraded mode; waiting for fresh ambient temperature data"
+        )
+        return 0
+
     predict_data = prepare_forecast(MASTER_FILE)
 
     now_utc = pd.Timestamp.now(tz="UTC")
