@@ -54,38 +54,6 @@ def kill_zombie_processes():
 
 
 
-def run_selected_sync():
-    """
-    Fire-and-forget call to your shell sync script every 5 minutes.
-    Adjust SYNC_SCRIPT if your path/name differs.
-    """
-    SYNC_SCRIPT = os.path.expanduser('~/bin/sync_selected_to_vps.sh')
-    interval = 300  # 5 minutes
-
-    while True:
-        try:
-            if not os.path.isfile(SYNC_SCRIPT):
-                logging.error(f"Sync script not found: {SYNC_SCRIPT}")
-            elif not os.access(SYNC_SCRIPT, os.X_OK):
-                logging.error(f"Sync script is not executable: {SYNC_SCRIPT}")
-            else:
-                # Start it asynchronously (don’t wait)
-                subprocess.Popen([SYNC_SCRIPT],
-                                 stdout=subprocess.DEVNULL,
-                                 stderr=subprocess.STDOUT)
-                logging.info(f"Started sync script: {SYNC_SCRIPT}")
-                # Optional: RAM cleanup like your other loops
-                clean_ram()
-                kill_zombie_processes()
-        except Exception as e:
-            logging.error(f"Failed to launch sync script: {e}")
-
-        # simple countdown, matching your style
-        for remaining in range(interval, 0, -1):
-            print(f"Next selected-file sync in {remaining} sec...", end="\r", flush=True)
-            time.sleep(1)
-        print("Kicking sync now!                          ")
-
 
 
 def run_git_commit():
@@ -263,7 +231,6 @@ if __name__ == "__main__":
         threading.Thread(target=run_processing),
         threading.Thread(target=run_email_alerts),
         threading.Thread(target=run_git_commit),
-        threading.Thread(target=run_selected_sync)
     ]
 
 
