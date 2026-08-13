@@ -1,337 +1,398 @@
-import os
+#!/usr/bin/env python3
+"""Incremental wildlife detection for the weather-station camera.
+
+MegaDetector first localizes any animal, rather than pretending a COCO model
+knows classes it was never trained on.  ResNet then supplies a best-effort
+species label for the animal crop.  Results are written as annotated JPEGs and
+a JSON manifest that browsers can consume without directory listing enabled.
+"""
+
+from __future__ import annotations
+
+import csv
 import glob
 import json
 import logging
-from datetime import datetime, timedelta
-from tqdm import tqdm
+import os
+import re
+import shutil
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
+import pandas as pd
 import torch
 import torch.nn.functional as F
-import pytz
-import pandas as pd
-from PIL import Image, ImageDraw, ImageFont, ImageOps
-from torchvision.ops import nms
-import torchvision.transforms as transforms
-import torchvision.models as models
-import urllib.request
+from PIL import Image, ImageDraw, ImageFont
+from torchvision import models, transforms
 
-IMAGENET_LABELS_FILE = "imagenet_classes.txt"
 
-# --- New: Image Preprocessing ---
-def preprocess_image(img):
-    """
-    Enhance image contrast and equalize histogram.
-    """
-    img = ImageOps.autocontrast(img)
-    img = ImageOps.equalize(img)
-    return img
+BASE_DIR = Path(__file__).resolve().parent
+MODEL_FILE = BASE_DIR / "md_v5a.0.1.pt"
+LABELS_FILE = BASE_DIR / "imagenet_classes.txt"
+DEFAULT_CLASSES = [
+    "bird", "deer", "squirrel", "rabbit", "cat", "dog", "fox", "raccoon",
+    "opossum", "skunk", "coyote", "rodent", "groundhog", "weasel", "badger",
+    "turkey", "hawk", "owl", "crow", "woodpecker", "animal",
+]
 
-# --- Core Functions ---
-def load_models():
-    try:
-        model_small = torch.hub.load('ultralytics/yolov5', 'custom', path='yolov5m.pt', skip_validation=True, verbose=False)
-        model_large = torch.hub.load('ultralytics/yolov5', 'custom', path='yolov5l.pt', skip_validation=True, verbose=False)
-        return [model_small, model_large]
-    except Exception as e:
-        logging.error(f"Failed to load models: {e}")
-        raise
-
-def detect_objects(img, models, confidence_threshold, target_classes):
-    """Run detection on the image and filter for target classes with sufficient confidence."""
-    all_detections = []
-    for model in models:
-        try:
-            results = model(img)
-        except Exception as e:
-            logging.error(f"Inference failed: {e}")
-            continue
-        df = results.pandas().xyxy[0]
-        df = df[(df['confidence'] >= confidence_threshold) & (df['name'].isin(target_classes))]
-        all_detections.append(df)
-    
-    if not all_detections:
-        return pd.DataFrame()
-    
-    combined_df = pd.concat(all_detections, ignore_index=True)
-    if combined_df.empty:
-        return combined_df
-
-    boxes = torch.tensor(combined_df[['xmin', 'ymin', 'xmax', 'ymax']].values, dtype=torch.float32)
-    scores = torch.tensor(combined_df['confidence'].values, dtype=torch.float32)
-    keep_indices = nms(boxes, scores, 0.5)
-    return combined_df.iloc[keep_indices.numpy()]
-
-def annotate_image(img, detections, font):
-    """
-    Draw bounding boxes and labels on the image.
-    """
-    draw = ImageDraw.Draw(img)
-    detection_info = []
-    for _, row in detections.iterrows():
-        box = [row['xmin'], row['ymin'], row['xmax'], row['ymax']]
-        label = f"{row['name']}: {row['confidence']:.2f}"
-        draw.rectangle(box, outline='red', width=2)
-        draw.text((row['xmin'], row['ymax']), label, fill='red', font=font)
-        detection_info.append({
-            "class": row['name'],
-            "confidence": row['confidence'],
-            "xmin": row['xmin'],
-            "ymin": row['ymin'],
-            "xmax": row['xmax'],
-            "ymax": row['ymax']
-        })
-    return img, detection_info
-
-def post_to_instagram(detection_posts, output_dir, log_file, bot):
-    try:
-        with open(log_file, "r") as f:
-            posted_images = json.load(f)
-    except FileNotFoundError:
-        posted_images = []
-    
-    for post in detection_posts:
-        filename = os.path.basename(post["original_path"])
-        if filename in posted_images:
-            logging.info(f"{filename} already posted, skipping.")
-            continue
-
-        output_path = os.path.join(output_dir, filename)
-        post["annotated_img"].save(output_path, format="JPEG")
-        time_str = post["timestamp"].astimezone(pytz.timezone("America/Denver")).strftime("%Y-%m-%d %H:%M:%S %Z")
-        detection_strs = []
-        for d in post["detections"]:
-            if d["class"].lower() == "bird":
-                if "refined_bird_class" in d:
-                    text = (f"Detected bird with {d['confidence']*100:.1f}% confidence, "
-                            f"refined to {d['refined_bird_class']} with {d['refined_bird_confidence']*100:.1f}% confidence")
-                else:
-                    text = f"Detected bird with {d['confidence']*100:.1f}% confidence"
-            else:
-                if "refined_animal_class" in d:
-                    text = (f"Detected {d['refined_animal_class']} with {d['refined_animal_confidence']*100:.1f}% confidence")
-                else:
-                    text = f"Detected {d['class']} with {d['confidence']*100:.1f}% confidence"
-            detection_strs.append(text)
-        caption = f"Detected: {', '.join(detection_strs)} at {time_str}"
-        bot.upload_photo(output_path, caption=caption)
-        logging.info(f"Posted {output_path} with caption: {caption}")
-        posted_images.append(filename)
-        with open(log_file, "w") as f:
-            json.dump(posted_images, f)
-
-def filter_detections(detections):
-    # Additional filtering can be implemented here.
-    return detections
-
-def load_imagenet_labels():
-    if os.path.exists(IMAGENET_LABELS_FILE):
-        with open(IMAGENET_LABELS_FILE) as f:
-            return [l.strip() for l in f]
-    url = 'https://raw.githubusercontent.com/pytorch/hub/master/imagenet_classes.txt'
-    labels = [l.decode().strip() for l in urllib.request.urlopen(url)]
-    with open(IMAGENET_LABELS_FILE, "w") as f:
-        f.write("\n".join(labels))
-    return labels
-
-def load_classifier():
-    classifier = models.resnet50(weights=models.ResNet50_Weights.DEFAULT)
-    classifier.eval()
-    return classifier
-
-classifier_transform = transforms.Compose([
+CLASSIFIER_TRANSFORM = transforms.Compose([
     transforms.Resize(256),
     transforms.CenterCrop(224),
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
 ])
 
-def refine_bird_detection(img, bbox, classifier_model, imagenet_classes):
-    cropped = img.crop(bbox)
-    input_tensor = classifier_transform(cropped).unsqueeze(0)
-    with torch.no_grad():
-        output = classifier_model(input_tensor)
-    probabilities = F.softmax(output, dim=1)
-    top_prob, top_idx = probabilities.topk(1)
-    label = imagenet_classes[top_idx.item()]
-    BIRD_KEYWORDS = ['bird', 'sparrow', 'robin', 'eagle', 'hawk', 'finch', 'owl', 'parrot', 'duck']
-    if not any(keyword in label.lower() for keyword in BIRD_KEYWORDS):
-        label = "bird"
-        confidence = 0.5 * top_prob.item()
-    else:
-        confidence = top_prob.item()
-    return label, confidence
+# ImageNet does not have a literal white-tailed-deer class.  It generally maps
+# deer photographs to visually related ungulates, which we normalize here.
+SPECIES_ALIASES = {
+    "impala": "deer", "gazelle": "deer", "hartebeest": "deer",
+    "ibex": "deer", "bighorn": "deer", "ram": "deer",
+    "fox squirrel": "squirrel", "marmot": "groundhog",
+    "wood rabbit": "rabbit", "hare": "rabbit", "polecat": "skunk",
+    "red fox": "fox", "grey fox": "fox", "kit fox": "fox",
+    "tabby": "cat", "tiger cat": "cat", "Egyptian cat": "cat",
+    "cougar": "cat", "lynx": "cat", "timber wolf": "coyote",
+    "red wolf": "coyote", "white wolf": "coyote",
+}
 
-def refine_animal_detection(img, bbox, classifier_model, imagenet_classes, target_classes):
-    cropped = img.crop(bbox)
-    input_tensor = classifier_transform(cropped).unsqueeze(0)
-    with torch.no_grad():
-        output = classifier_model(input_tensor)
-    probabilities = F.softmax(output, dim=1)
-    top_probs, top_idxs = probabilities.topk(5)
-    for prob, idx in zip(top_probs[0], top_idxs[0]):
-        label = imagenet_classes[idx.item()]
-        if label.lower() in [t.lower() for t in target_classes]:
-            return label, prob.item()
-    label = imagenet_classes[top_idxs[0][0].item()]
-    return label, top_probs[0][0].item()
+KNOWN_ANIMALS = {
+    "bird", "deer", "squirrel", "rabbit", "cat", "dog", "fox", "raccoon",
+    "opossum", "skunk", "coyote", "rodent", "groundhog", "weasel", "badger",
+    "turkey", "hawk", "owl", "crow", "raven", "woodpecker", "mouse", "rat",
+    "vole", "chipmunk", "mink", "ferret", "otter", "beaver", "porcupine",
+    "armadillo", "bear", "hog", "boar", "bird", "robin", "jay", "finch",
+    "hummingbird", "goose", "duck", "heron", "egret", "vulture", "falcon",
+}
 
-def refine_detections(detection_posts, classifier_model, imagenet_classes, target_classes):
-    for post in detection_posts:
-        for detection in post["detections"]:
-            bbox = (detection["xmin"], detection["ymin"], detection["xmax"], detection["ymax"])
-            if detection["class"].lower() == "bird":
-                refined_label, refined_conf = refine_bird_detection(post["original_img"], bbox, classifier_model, imagenet_classes)
-                if refined_label.lower() != "bird":
-                    detection["refined_bird_class"] = refined_label
-                    detection["refined_bird_confidence"] = refined_conf
-            else:
-                refined_label, refined_conf = refine_animal_detection(post["original_img"], bbox, classifier_model, imagenet_classes, target_classes)
-                detection["refined_animal_class"] = refined_label
-                detection["refined_animal_confidence"] = refined_conf
-    return detection_posts
 
-# --- Helper Functions for Post Scheduling ---
-LAST_POST_FILE = "last_post_time.txt"
-POST_INTERVAL_HOURS = 4
+def _atomic_json(path: Path, value) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8") as stream:
+        json.dump(value, stream, indent=2, allow_nan=False)
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.replace(temporary, path)
 
-def can_post(last_post_file=LAST_POST_FILE, interval_hours=POST_INTERVAL_HOURS):
+
+def _load_json(path: Path, default):
     try:
-        with open(last_post_file, "r") as f:
-            last_post_str = f.read().strip()
-            last_post_time = datetime.fromisoformat(last_post_str)
-    except Exception:
-        return True
-    return datetime.now() - last_post_time >= timedelta(hours=interval_hours)
+        with path.open(encoding="utf-8") as stream:
+            return json.load(stream)
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return default
 
-def update_last_post_time(last_post_file=LAST_POST_FILE):
-    with open(last_post_file, "w") as f:
-        f.write(datetime.now().isoformat())
 
-def select_best_detection_post(detection_posts):
-    best_post = None
-    best_bird_conf = -1
-    for post in detection_posts:
-        bird_confidences = [d['confidence'] for d in post['detections'] if d['class'].lower() == "bird"]
-        if bird_confidences:
-            max_conf = max(bird_confidences)
-            if max_conf > best_bird_conf:
-                best_bird_conf = max_conf
-                best_post = post
-    if best_post is None:
-        best_post = max(detection_posts, key=lambda post: len(post['detections']))
-    return best_post
+def load_detector(model_file: Path = MODEL_FILE):
+    if not model_file.exists():
+        raise FileNotFoundError(
+            f"Wildlife model not found at {model_file}; install MegaDetector v5a weights"
+        )
+    model = torch.hub.load(
+        "ultralytics/yolov5", "custom", path=str(model_file),
+        skip_validation=True, verbose=False,
+    )
+    model.classes = [0]  # MegaDetector: 0 animal, 1 person, 2 vehicle
+    model.max_det = 20
+    return model
 
-# --- Main Pipeline ---
+
+def load_classifier():
+    # V1 performs more reliably on this camera's IR/green night imagery than
+    # the newer V2 preprocessing (validated against the station's deer frame).
+    classifier = models.resnet50(weights=models.ResNet50_Weights.IMAGENET1K_V1)
+    classifier.eval()
+    return classifier
+
+
+def load_labels() -> list[str]:
+    with LABELS_FILE.open(encoding="utf-8") as stream:
+        return [line.strip() for line in stream if line.strip()]
+
+
+def _normalized_species(label: str, allowed: set[str]) -> str | None:
+    lower = label.lower()
+    normalized = SPECIES_ALIASES.get(lower, lower)
+    if normalized in allowed:
+        return normalized
+    for animal in allowed - {"animal"}:
+        if re.search(rf"\b{re.escape(animal)}\b", lower):
+            return animal
+    if normalized in KNOWN_ANIMALS:
+        return normalized
+    return None
+
+
+def classify_crop(
+    image: Image.Image,
+    box: tuple[int, int, int, int],
+    classifier,
+    labels: list[str],
+    allowed: set[str],
+) -> tuple[str, float]:
+    crop = image.crop(box)
+    if crop.width < 8 or crop.height < 8:
+        return "animal", 0.0
+    tensor = CLASSIFIER_TRANSFORM(crop).unsqueeze(0)
+    with torch.inference_mode():
+        probabilities = F.softmax(classifier(tensor), dim=1)[0]
+    top_probabilities, top_indices = probabilities.topk(10)
+    for probability, index in zip(top_probabilities, top_indices):
+        species = _normalized_species(labels[index.item()], allowed)
+        if species:
+            return species, float(probability.item())
+    return "animal", float(top_probabilities[0].item())
+
+
+def detect_animals(image: Image.Image, detector, threshold: float) -> pd.DataFrame:
+    detector.conf = threshold
+    with torch.inference_mode():
+        result = detector(image, size=1280)
+    detections = result.pandas().xyxy[0]
+    if detections.empty:
+        return detections
+    return detections[
+        (detections["name"] == "animal") &
+        (detections["confidence"] >= threshold)
+    ].copy()
+
+
+def detect_animal_batch(images: list[Image.Image], detector, threshold: float) -> list[pd.DataFrame]:
+    """Run frames together to avoid paying model overhead for every image."""
+    detector.conf = threshold
+    with torch.inference_mode():
+        result = detector(images, size=1280)
+    filtered = []
+    for detections in result.pandas().xyxy:
+        filtered.append(detections[
+            (detections["name"] == "animal") &
+            (detections["confidence"] >= threshold)
+        ].copy())
+    return filtered
+
+
+def _font(size: int = 44):
+    for name in ("DejaVuSans-Bold.ttf", "DejaVuSans.ttf"):
+        try:
+            return ImageFont.truetype(name, size)
+        except OSError:
+            pass
+    return ImageFont.load_default()
+
+
+def annotate(image: Image.Image, detections: list[dict]) -> Image.Image:
+    output = image.copy()
+    draw = ImageDraw.Draw(output)
+    font = _font(max(20, round(output.width / 70)))
+    line_width = max(3, round(output.width / 700))
+    for detection in detections:
+        box = detection["box"]
+        species = detection["species"].replace("_", " ").title()
+        label = f"{species}  {detection['detector_confidence']:.0%}"
+        draw.rectangle(box, outline="#ff3b30", width=line_width)
+        text_box = draw.textbbox((box[0], box[1]), label, font=font)
+        text_height = text_box[3] - text_box[1] + 8
+        text_y = max(0, box[1] - text_height)
+        draw.rectangle((box[0], text_y, text_box[2] + 8, text_y + text_height), fill="#ff3b30")
+        draw.text((box[0] + 4, text_y + 2), label, fill="white", font=font)
+    return output
+
+
+def _timestamp_for(path: str) -> datetime | None:
+    try:
+        return datetime.strptime(Path(path).stem, "%Y%m%d_%H%M%S").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _write_detection_csv(path: Path, records: list[dict]) -> None:
+    temporary = path.with_suffix(".csv.tmp")
+    fields = [
+        "image", "timestamp", "species", "detector_confidence",
+        "species_confidence", "xmin", "ymin", "xmax", "ymax",
+    ]
+    with temporary.open("w", newline="", encoding="utf-8") as stream:
+        writer = csv.DictWriter(stream, fieldnames=fields)
+        writer.writeheader()
+        for record in records:
+            for detection in record["detections"]:
+                box = detection["box"]
+                writer.writerow({
+                    "image": record["filename"],
+                    "timestamp": record["timestamp"],
+                    "species": detection["species"],
+                    "detector_confidence": detection["detector_confidence"],
+                    "species_confidence": detection["species_confidence"],
+                    "xmin": box[0], "ymin": box[1], "xmax": box[2], "ymax": box[3],
+                })
+    os.replace(temporary, path)
+
+
+def publish_outputs(output_dir: Path, records: list[dict]) -> None:
+    records.sort(key=lambda record: record["timestamp"], reverse=True)
+    _atomic_json(output_dir / "detections.json", records)
+    _write_detection_csv(output_dir / "animal_detections.csv", records)
+
+    manifest = {
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "count": len(records),
+        "images": records,
+    }
+    _atomic_json(output_dir / "manifest.json", manifest)
+    if not records:
+        return
+
+    latest = records[0]
+    latest_source = output_dir / latest["filename"]
+    latest_image = output_dir / "latest_animal.jpg"
+    temporary_image = output_dir / "latest_animal.tmp.jpg"
+    shutil.copy2(latest_source, temporary_image)
+    os.replace(temporary_image, latest_image)
+    summary = dict(latest)
+    summary["image_url"] = "/bigdata/weather_station/images/birds/latest_animal.jpg"
+    _atomic_json(output_dir / "latest_detection.json", summary)
+
+
+def include_legacy_gallery_images(output_dir: Path, records: list[dict]) -> None:
+    """Keep annotated images produced by the former detector in the gallery."""
+    recorded = {record.get("filename") for record in records}
+    excluded = {"latest_animal.jpg"}
+    for path in output_dir.glob("*.jpg"):
+        if path.name in recorded or path.name in excluded:
+            continue
+        timestamp = _timestamp_for(path.name)
+        if timestamp is None:
+            continue
+        records.append({
+            "filename": path.name,
+            "timestamp": timestamp.isoformat(),
+            "detections": [{
+                "species": "animal",
+                "detector_confidence": 0.0,
+                "species_confidence": 0.0,
+                "box": [0, 0, 0, 0],
+                "legacy": True,
+            }],
+        })
+
+
 def run_detection_pipeline(
     image_dir,
     output_dir,
-    confidence_threshold=0.3,
+    confidence_threshold=0.2,
     log_file="processed_images.json",
-    bot=None,  # Instagram bot instance (if available)
+    bot=None,
     hours_back=3,
-    target_classes=['bird', 'squirrel', 'cat', 'rabbit', 'fox']  # only animals
+    target_classes=None,
 ):
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Load YOLOv5 models.
-    models_list = load_models()
-    
-    # Get all JPEG images.
-    image_files = sorted(glob.glob(os.path.join(image_dir, "*.jpg")))
-    
-    timestamps = []
-    for img in image_files:
-        try:
-            base = os.path.basename(img).replace(".jpg", "")
-            ts = datetime.strptime(base, "%Y%m%d_%H%M%S")
-            ts = pytz.UTC.localize(ts)
-            timestamps.append((img, ts))
-        except ValueError:
+    """Detect newly arrived wildlife images and refresh web-facing metadata."""
+    del bot  # Posting is deliberately separate from the detection pipeline.
+    image_dir = Path(image_dir)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    log_path = Path(log_file)
+    allowed = {item.lower() for item in (target_classes or DEFAULT_CLASSES)}
+    allowed.add("animal")
+
+    processed_value = _load_json(log_path, [])
+    if isinstance(processed_value, dict):
+        processed = set(processed_value.get("processed", []))
+    else:  # Migrate the old list-only format.
+        processed = set(processed_value)
+    records = _load_json(output_dir / "detections.json", [])
+    if not isinstance(records, list):
+        records = []
+    include_legacy_gallery_images(output_dir, records)
+    recorded_files = {record.get("filename") for record in records}
+
+    candidates = []
+    for filename in sorted(glob.glob(str(image_dir / "*.jpg"))):
+        if Path(filename).name == "latest.jpg":
             continue
-    if not timestamps:
-        logging.info("No properly named images found.")
+        timestamp = _timestamp_for(filename)
+        if timestamp:
+            candidates.append((filename, timestamp))
+    if not candidates:
+        publish_outputs(output_dir, records)
         return
 
-    timestamps.sort(key=lambda x: x[1])
-    now = timestamps[-1][1]
-    plot_start = now - timedelta(hours=hours_back)
-    new_images = [(img, ts) for img, ts in timestamps if ts >= plot_start]
-    
-    logging.info(f"Found {len(new_images)} images from the last {hours_back} hours.")
-    
-    try:
-        font = ImageFont.truetype("arial.ttf", 50)
-    except Exception:
-        try:
-            font = ImageFont.truetype("DejaVuSans.ttf", 50)
-        except Exception:
-            logging.warning("Falling back to default font.")
-            font = ImageFont.load_default()
-    
-    detection_posts = []
-    
-    for img_path, img_timestamp in tqdm(new_images, desc="Processing images"):
-        try:
-            img_orig = Image.open(img_path).convert("RGB").rotate(180, expand=True)
-            img_proc = preprocess_image(img_orig.copy())
-        except Exception as e:
-            logging.warning(f"Skipping {img_path}: {e}")
-            continue
-
-        detections = detect_objects(img_proc, models_list, confidence_threshold, target_classes)
-        detections = filter_detections(detections)
-        if detections.empty:
-            continue
-        
-        annotated_img, detection_info = annotate_image(img_orig.copy(), detections, font)
-        detection_posts.append({
-            "original_img": img_orig,
-            "annotated_img": annotated_img,
-            "timestamp": img_timestamp,
-            "detections": detection_info,
-            "original_path": img_path
-        })
-    
-    # Print detection summary
-    print(f"Processed {len(new_images)} images.")
-    print(f"Found detections in {len(detection_posts)} images.")
-    
-    if not detection_posts:
-        logging.info("No animal detections found in processed images.")
+    newest = candidates[-1][1]
+    cutoff = newest - timedelta(hours=hours_back)
+    pending = [
+        item for item in candidates
+        if item[1] >= cutoff and Path(item[0]).name not in processed
+    ]
+    if not pending:
+        publish_outputs(output_dir, records)
+        logging.info("Wildlife detection: no new images to process")
         return
 
-    classifier_model = load_classifier()
-    imagenet_classes = load_imagenet_labels()
-    detection_posts = refine_detections(detection_posts, classifier_model, imagenet_classes, target_classes)
-    
-    best_post = select_best_detection_post(detection_posts)
-    if best_post is None:
-        logging.info("No suitable post found.")
-        return
+    logging.info("Wildlife detection: processing %d new images", len(pending))
+    detector = load_detector()
+    classifier = None
+    labels = None
 
-    # If an Instagram bot is provided, use it; otherwise, move (save) the annotated images.
-    if bot is not None:
-        # Uncomment the following lines to post using your Instagram bot.
-        # post_to_instagram([best_post], output_dir, log_file, bot)
-        # update_last_post_time()
-        pass
-    else:
-        for post in detection_posts:
-            filename = os.path.basename(post["original_path"])
-            output_path = os.path.join(output_dir, filename)
-            post["annotated_img"].save(output_path, format="JPEG")
-            print(f"Moved {post['original_path']} to {output_path}")
-    
-    # Rename files flagged for removal.
-    for filename in os.listdir(output_dir):
-        if "REMOVE_ME" in filename:
-            old_path = os.path.join(output_dir, filename)
-            new_filename = filename.replace(".REMOVE_ME", "")
-            new_path = os.path.join(output_dir, new_filename)
-            os.rename(old_path, new_path)
-            print(f"Renamed: {filename} -> {new_filename}")
+    batch_size = 4
+    for offset in range(0, len(pending), batch_size):
+        batch_items = pending[offset:offset + batch_size]
+        loaded = []
+        for filename, timestamp in batch_items:
+            try:
+                with Image.open(filename) as source:
+                    # Camera images arrive at the server in their final display
+                    # orientation.  Do not retain the former 180° correction.
+                    image = source.convert("RGB")
+                loaded.append((filename, timestamp, image))
+            except Exception as exc:
+                logging.warning("Wildlife detection skipped %s: %s", Path(filename).name, exc)
+        if not loaded:
+            continue
+        try:
+            frames = detect_animal_batch(
+                [item[2] for item in loaded], detector, confidence_threshold,
+            )
+        except Exception as exc:
+            logging.warning("Wildlife detection batch failed: %s", exc)
+            continue
 
-    print("Pipeline complete. All tasks done.")
+        for (filename, timestamp, image), frame in zip(loaded, frames):
+            basename = Path(filename).name
+            if not frame.empty:
+                if classifier is None:
+                    classifier = load_classifier()
+                    labels = load_labels()
+                detections = []
+                for row in frame.itertuples(index=False):
+                    box = tuple(round(value) for value in (row.xmin, row.ymin, row.xmax, row.ymax))
+                    species, species_confidence = classify_crop(image, box, classifier, labels, allowed)
+                    detections.append({
+                        "species": species,
+                        "detector_confidence": round(float(row.confidence), 5),
+                        "species_confidence": round(species_confidence, 5),
+                        "box": list(box),
+                    })
+                annotated = annotate(image, detections)
+                temporary = output_dir / f".{basename}.tmp"
+                annotated.save(temporary, format="JPEG", quality=92)
+                os.replace(temporary, output_dir / basename)
+                if basename not in recorded_files:
+                    records.append({
+                        "filename": basename,
+                        "timestamp": timestamp.isoformat(),
+                        "detections": detections,
+                    })
+                    recorded_files.add(basename)
+                logging.info("Wildlife detected in %s: %s", basename, ", ".join(d["species"] for d in detections))
+            processed.add(basename)
+        _atomic_json(log_path, {"processed": sorted(processed)})
 
-# Example usage:
-# run_detection_pipeline("path/to/images", "path/to/output")
+    publish_outputs(output_dir, records)
+    logging.info("Wildlife detection complete: %d detection images total", len(records))
+
+
+if __name__ == "__main__":
+    run_detection_pipeline(
+        BASE_DIR / "images",
+        BASE_DIR / "images" / "birds",
+        log_file=BASE_DIR / "images" / "birds" / "processed_images.json",
+    )

@@ -2,195 +2,139 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Weather Station Image Gallery</title>
-  <link rel="stylesheet" type="text/css" href="styles.css">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Weather Station Wildlife Gallery</title>
   <style>
-    .gallery {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-      gap: 15px;
-      max-width: 1600px;
-      margin: auto;
-      text-align: center;
-    }
-
-    .gallery img {
-      width: 100%;
-      height: auto;
-      cursor: pointer;
-      border-radius: 5px;
-      transition: transform 0.2s;
-      
-    }
-
-    .gallery img:hover {
-      transform: scale(1.05);
-    }
-
-    .filename {
-      font-size: 18px;
-      margin-top: 8px;
-    }
-
-    #lightbox {
-      display: none;
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(0, 0, 0, 0.8);
-      justify-content: center;
-      align-items: center;
-    }
-
-    #lightbox img {
-      max-width: 90%;
-      max-height: 90%;
-      border-radius: 5px;
+    * { box-sizing: border-box; }
+    body { margin: 0; background: #b8d4a8; color: #1a1a1a; font: 13pt/1.5 "Times New Roman", Times, serif; }
+    a { color: #2a5e1e; font-weight: bold; }
+    a:visited { color: #5e3a7e; }
+    .wrapper { width: calc(100% - 28px); max-width: 1180px; margin: 18px auto; background: #cde3be; border: 3px ridge #4a7a3a; }
+    header { padding: 14px 20px; color: white; background: #3a6a2a; border-bottom: 3px solid #2a5a1a; }
+    header h1 { margin: 0; font-size: 24pt; }
+    header p { margin: 3px 0 0; color: #dcefd0; }
+    nav, #status, #pagination { padding: 9px 16px; background: #dcefd0; border-bottom: 2px solid #6a9a5a; }
+    #status { text-align: center; font-style: italic; }
+    .gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; padding: 16px; }
+    figure { min-width: 0; margin: 0; padding: 7px; border: 2px outset #8ab87a; background: #dcefd0; }
+    figure img { display: block; width: 100%; height: auto; border: 1px solid #4a7a3a; cursor: pointer; }
+    figcaption { padding: 6px 3px 1px; text-align: center; }
+    .species { color: #2a4e1a; font-weight: bold; text-transform: capitalize; }
+    .details { display: block; font: 9pt "Courier New", monospace; }
+    #pagination { display: flex; justify-content: center; align-items: center; gap: 12px; border-top: 2px solid #6a9a5a; }
+    button { padding: 5px 12px; border: 2px outset #a0c090; background: #e8f0e0; font: bold 10pt "Courier New", monospace; cursor: pointer; }
+    button:active { border-style: inset; }
+    button:disabled { opacity: .5; cursor: default; }
+    dialog { width: min(96vw, 1500px); max-height: 96vh; padding: 8px; border: 3px ridge #8ab87a; background: #1a1a1a; }
+    dialog::backdrop { background: rgba(0, 0, 0, .82); }
+    dialog img { display: block; max-width: 100%; max-height: calc(96vh - 55px); margin: auto; }
+    dialog button { display: block; margin: 8px auto 0; }
+    footer { padding: 7px 12px; text-align: center; color: #e8f0e0; background: #5a8a4a; }
+    @media (max-width: 700px) {
+      .wrapper { width: 100%; margin: 0; border-left: 0; border-right: 0; }
+      .gallery { grid-template-columns: minmax(0, 1fr); padding: 10px; gap: 12px; }
+      header h1 { font-size: 21pt; }
     }
   </style>
 </head>
-<body><h1>Weather Station Bird Image Gallery</h1>
-<div class="gallery" id="gallery"></div>
-<div id="pagination"></div>
+<body>
+<main class="wrapper">
+  <header><h1>Wildlife Visitors</h1><p>Animals detected by the weather-station camera</p></header>
+  <nav><a href="Weather.html">&#8592; Back to the weather station</a></nav>
+  <div id="status">Loading wildlife detections&hellip;</div>
+  <div class="gallery" id="gallery"></div>
+  <div id="pagination" hidden>
+    <button id="previous" type="button">&#8592; Previous</button>
+    <span id="page-label"></span>
+    <button id="next" type="button">Next &#8594;</button>
+  </div>
+  <footer>Times shown in Carrboro local time.</footer>
+</main>
 
-<div id="lightbox" onclick="closeLightbox()">
-  <img id="lightbox-img" src="" alt="Expanded View">
-</div>
+<dialog id="lightbox" aria-label="Expanded wildlife image">
+  <img id="lightbox-image" alt="Expanded wildlife detection">
+  <button type="button" id="close-lightbox">Close</button>
+</dialog>
 
 <script>
-  const imageDir = "/media/bigdata/weather_station/images/birds";
-  const imageExtensions = ["jpg", "gif"]; // Supported image formats
+  const manifestUrl = '/bigdata/weather_station/images/birds/manifest.json';
+  const imageBase = '/bigdata/weather_station/images/birds/';
+  const perPage = 24;
+  let images = [];
   let currentPage = 1;
-  const imagesPerPage = 50;
-  let allImages = [];
 
-  function convertUTCToMountain(utcString) {
-    let parts = utcString.split("_");
-    if (parts.length !== 2) return utcString;
-
-    let datePart = parts[0];
-    let timePart = parts[1];
-
-    let year = parseInt(datePart.slice(0, 4));
-    let month = parseInt(datePart.slice(4, 6));
-    let day = parseInt(datePart.slice(6, 8));
-    let hour = parseInt(timePart.slice(0, 2));
-    let minute = parseInt(timePart.slice(2, 4));
-    let second = parseInt(timePart.slice(4, 6));
-
-    let utcDate = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
-
-    const dtf = new Intl.DateTimeFormat("en-US", {
-      timeZone: "America/Denver",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      second: "2-digit",
-      hour12: false
-    });
-
-    let partsArr = dtf.formatToParts(utcDate);
-    let formatted = {};
-    partsArr.forEach(({ type, value }) => {
-      formatted[type] = value;
-    });
-
-    return `${formatted.year}-${formatted.month}-${formatted.day} ${formatted.hour}:${formatted.minute}:${formatted.second}`;
+  function localTime(timestamp) {
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'medium'
+    }).format(new Date(timestamp));
   }
 
-  function formatFilename(file) {
-    let base = file.replace(/\.(jpg|gif)$/, ""); // Remove extension
-    return convertUTCToMountain(base);
-  }
-
-  async function loadImages() {
-    let response = await fetch(imageDir);
-    if (!response.ok) return console.error("Failed to load image directory");
-
-    let images = await response.text();
-    let imageFiles = images.match(/\d{8}_\d{6}\.(jpg|gif)/g);
-    if (!imageFiles) return;
-
-    allImages = [...new Set(imageFiles)].reverse(); // Remove duplicates and reverse order
-    renderPage(currentPage);
-  }
-
-  function renderPage(page) {
-    let gallery = document.getElementById("gallery");
-    gallery.innerHTML = "";
-
-    let start = (page - 1) * imagesPerPage;
-    let end = start + imagesPerPage;
-    let imagesToShow = allImages.slice(start, end);
-
-    imagesToShow.forEach(file => {
-      let container = document.createElement("div");
-      container.classList.add("image-container");
-
-      let img = document.createElement("img");
-      img.src = `${imageDir}/${file}`;
-      img.alt = file;
-      img.onclick = () => openLightbox(img.src);
-
-      let caption = document.createElement("div");
-      caption.classList.add("filename");
-      caption.innerText = formatFilename(file);
-
-      container.appendChild(img);
-      container.appendChild(caption);
-      gallery.appendChild(container);
-    });
-
-    updatePagination();
-  }
-
-  function updatePagination() {
-    let pagination = document.getElementById("pagination");
-    pagination.innerHTML = "";
-
-    let totalPages = Math.ceil(allImages.length / imagesPerPage);
-
-    if (currentPage > 1) {
-      let prevButton = document.createElement("button");
-      prevButton.innerText = "Previous";
-      prevButton.onclick = () => changePage(currentPage - 1);
-      pagination.appendChild(prevButton);
+  function render() {
+    const gallery = document.getElementById('gallery');
+    gallery.replaceChildren();
+    const start = (currentPage - 1) * perPage;
+    for (const record of images.slice(start, start + perPage)) {
+      const detection = [...record.detections].sort((a, b) => b.detector_confidence - a.detector_confidence)[0];
+      const figure = document.createElement('figure');
+      const image = document.createElement('img');
+      image.src = imageBase + encodeURIComponent(record.filename);
+      image.alt = `Detected ${detection.species || 'animal'}`;
+      image.loading = 'lazy';
+      image.addEventListener('click', () => openLightbox(image.src, image.alt));
+      const caption = document.createElement('figcaption');
+      const species = document.createElement('span');
+      species.className = 'species';
+      species.textContent = detection.species || 'animal';
+      const details = document.createElement('span');
+      details.className = 'details';
+      details.textContent = `${localTime(record.timestamp)} · ${Math.round(detection.detector_confidence * 100)}%`;
+      caption.append(species, details);
+      figure.append(image, caption);
+      gallery.append(figure);
     }
+    const pages = Math.max(1, Math.ceil(images.length / perPage));
+    document.getElementById('page-label').textContent = `Page ${currentPage} of ${pages}`;
+    document.getElementById('previous').disabled = currentPage === 1;
+    document.getElementById('next').disabled = currentPage === pages;
+  }
 
-    let pageIndicator = document.createElement("span");
-    pageIndicator.innerText = ` Page ${currentPage} of ${totalPages} `;
-    pagination.appendChild(pageIndicator);
+  function changePage(amount) {
+    currentPage += amount;
+    render();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
 
-    if (currentPage < totalPages) {
-      let nextButton = document.createElement("button");
-      nextButton.innerText = "Next";
-      nextButton.onclick = () => changePage(currentPage + 1);
-      pagination.appendChild(nextButton);
+  function openLightbox(src, alt) {
+    const dialog = document.getElementById('lightbox');
+    const image = document.getElementById('lightbox-image');
+    image.src = src;
+    image.alt = alt;
+    dialog.showModal();
+  }
+
+  async function loadGallery() {
+    const status = document.getElementById('status');
+    try {
+      const response = await fetch(manifestUrl, { cache: 'no-store' });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const manifest = await response.json();
+      images = Array.isArray(manifest.images) ? manifest.images : [];
+      status.textContent = images.length ? `${images.length} detection image${images.length === 1 ? '' : 's'}` : 'No wildlife has been detected yet.';
+      document.getElementById('pagination').hidden = images.length <= perPage;
+      render();
+    } catch (error) {
+      status.textContent = 'The wildlife gallery is temporarily unavailable.';
+      console.error('Could not load wildlife manifest:', error);
     }
   }
 
-  function changePage(newPage) {
-    if (newPage < 1 || newPage > Math.ceil(allImages.length / imagesPerPage)) return;
-    currentPage = newPage;
-    renderPage(currentPage);
-  }
-
-  function openLightbox(src) {
-    document.getElementById("lightbox-img").src = src;
-    document.getElementById("lightbox").style.display = "flex";
-  }
-
-  function closeLightbox() {
-    document.getElementById("lightbox").style.display = "none";
-  }
-
-  loadImages();
+  document.getElementById('previous').addEventListener('click', () => changePage(-1));
+  document.getElementById('next').addEventListener('click', () => changePage(1));
+  document.getElementById('close-lightbox').addEventListener('click', () => document.getElementById('lightbox').close());
+  document.getElementById('lightbox').addEventListener('click', event => {
+    if (event.target === event.currentTarget) event.currentTarget.close();
+  });
+  loadGallery();
 </script>
-
 </body>
 </html>

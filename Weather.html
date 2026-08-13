@@ -2,6 +2,7 @@
 <html>
 <head>
     <title>Weather Station Data</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
         * { box-sizing: border-box; }
 
@@ -21,11 +22,12 @@
 
         /* ===== WRAPPER ===== */
         .site-wrapper {
-            width: 100%;
-            max-width: 5000px;
+            width: calc(100% - 28px);
+            max-width: 1180px;
             margin: 18px auto;
             background-color: #cde3be;
             border: 3px ridge #4a7a3a;
+            box-shadow: 4px 4px 0 rgba(42, 90, 26, 0.22);
         }
 
         /* ===== HEADER ===== */
@@ -110,6 +112,27 @@
             border-bottom: 2px solid #3a6a2a;
         }
 
+        /* ===== OLD-SCHOOL PAGE NAVIGATION ===== */
+        .page-nav {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 0;
+            padding: 7px 10px;
+            background-color: #dcefd0;
+            border-bottom: 2px solid #6a9a5a;
+            font-family: "Courier New", Courier, monospace;
+            font-size: 10pt;
+        }
+
+        .page-nav a {
+            padding: 2px 10px;
+            border-right: 1px solid #8ab87a;
+            white-space: nowrap;
+        }
+
+        .page-nav a:last-child { border-right: 0; }
+
         /* ===== SUMMARY BOX ===== */
         .summary-box {
             margin: 16px 18px;
@@ -119,18 +142,83 @@
             font-size: 12pt;
         }
 
-        /* ===== PLOTS SECTION ===== */
-        .plots-section {
-            padding: 0 18px 18px 18px;
+        .latest-animal {
+            display: grid;
+            grid-template-columns: minmax(220px, 42%) 1fr;
+            gap: 16px;
+            align-items: center;
+            margin: 0 18px 18px;
+            padding: 9px;
+            border: 2px outset #8ab87a;
+            background-color: #dcefd0;
         }
 
-        .plots-section img {
+        .latest-animal[hidden] { display: none; }
+
+        .latest-animal img {
+            display: block;
+            width: 100%;
+            height: auto;
+            border: 1px solid #4a7a3a;
+        }
+
+        .latest-animal h2 {
+            margin: 0 0 6px;
+            color: #2a4e1a;
+            font-size: 16pt;
+        }
+
+        .latest-animal p { margin: 4px 0; }
+
+        /* ===== PLOTS SECTION ===== */
+        .plots-section {
+            padding: 12px 18px 18px 18px;
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 16px;
+        }
+
+        .plot-card {
+            min-width: 0;
+            margin: 0;
+            padding: 7px;
+            border: 2px outset #8ab87a;
+            background-color: #dcefd0;
+        }
+
+        .plot-card img {
             display: block;
             width: 100%;
             max-width: 100%;
             height: auto;
-            margin: 10px auto;
-            border: 2px solid #4a7a3a;
+            margin: 0;
+            border: 1px solid #4a7a3a;
+        }
+
+        .plot-card a {
+            display: block;
+            background: #eef7e8;
+        }
+
+        .plot-card figcaption {
+            padding: 6px 4px 1px;
+            text-align: center;
+            color: #2a4e1a;
+            font-size: 10pt;
+            font-weight: bold;
+        }
+
+        .plot-card.featured {
+            grid-column: 1 / -1;
+        }
+
+        .plot-hint {
+            grid-column: 1 / -1;
+            margin: 0;
+            text-align: center;
+            font-size: 10pt;
+            font-style: italic;
+            color: #365c2b;
         }
 
         /* ===== INFO CARD ===== */
@@ -254,6 +342,66 @@
         .page-footer a {
             color: #d4eac4;
         }
+
+        @media (max-width: 720px) {
+            body {
+                font-size: 12pt;
+                line-height: 1.45;
+            }
+
+            .site-wrapper {
+                width: 100%;
+                margin: 0;
+                border-left: 0;
+                border-right: 0;
+                box-shadow: none;
+            }
+
+            .page-header {
+                padding: 12px 14px;
+                gap: 12px;
+                flex-wrap: wrap;
+            }
+
+            .page-header h1 { font-size: 22pt; }
+
+            .page-nav {
+                justify-content: flex-start;
+                overflow-x: auto;
+                flex-wrap: nowrap;
+            }
+
+            .summary-box,
+            .latest-animal,
+            .info-card,
+            .links-row,
+            .subscribe-block {
+                margin-left: 10px;
+                margin-right: 10px;
+                padding: 11px 12px;
+            }
+
+            .latest-animal {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .plots-section {
+                grid-template-columns: minmax(0, 1fr);
+                padding: 10px;
+                gap: 12px;
+            }
+
+            .plot-card.featured { grid-column: auto; }
+
+            .subscribe-block input[type="email"] {
+                width: 100%;
+                margin-bottom: 8px;
+            }
+
+            .subscribe-block button {
+                margin-left: 0;
+            }
+        }
     </style>
 
     <script>
@@ -291,9 +439,34 @@
                 console.error('Error loading small averages:', error);
             }
         }
+
+        async function loadLatestAnimal() {
+            try {
+                const response = await fetch('/bigdata/weather_station/images/birds/latest_detection.json', { cache: 'no-store' });
+                if (!response.ok) return;
+                const detection = await response.json();
+                if (!detection.detections || !detection.detections.length) return;
+
+                const card = document.getElementById('latest-animal');
+                const best = [...detection.detections].sort((a, b) => b.detector_confidence - a.detector_confidence)[0];
+                const species = (best.species || 'animal').replaceAll('_', ' ');
+                const detectedAt = new Intl.DateTimeFormat('en-US', {
+                    timeZone: 'America/New_York', dateStyle: 'medium', timeStyle: 'short'
+                }).format(new Date(detection.timestamp));
+                document.getElementById('latest-animal-name').textContent = species.replace(/\b\w/g, c => c.toUpperCase());
+                document.getElementById('latest-animal-time').textContent = detectedAt;
+                document.getElementById('latest-animal-confidence').textContent = `${Math.round(best.detector_confidence * 100)}% detection confidence`;
+                document.getElementById('latest-animal-image').src = `${detection.image_url}?t=${encodeURIComponent(detection.timestamp)}`;
+                card.hidden = false;
+            } catch (error) {
+                console.error('Error loading latest wildlife detection:', error);
+            }
+        }
         document.addEventListener('DOMContentLoaded', () => {
             loadSmallAverages();
+            loadLatestAnimal();
             setInterval(loadSmallAverages, 60000);
+            setInterval(loadLatestAnimal, 60000);
         });
     </script>
 </head>
@@ -313,26 +486,45 @@
         </div>
     </div>
 
+    <nav class="page-nav" aria-label="Page sections">
+        <a href="#conditions">Conditions</a>
+        <a href="#weather-plots">Weather plots</a>
+        <a href="#setup">About</a>
+        <a href="#data">Data &amp; images</a>
+        <a href="#subscribe">Subscribe</a>
+        <a href="#pi-health">Pi health</a>
+    </nav>
+
     <!-- CURRENT CONDITIONS -->
-    <div class="section-bar">&#9670; Current Conditions</div>
+    <div class="section-bar" id="conditions">&#9670; Current Conditions</div>
     <div class="summary-box">
         <div id="small-averages"></div>
     </div>
+    <article class="latest-animal" id="latest-animal" hidden>
+        <a href="bird_image_viewer.html"><img id="latest-animal-image" alt="Most recently detected animal"></a>
+        <div>
+            <h2>Latest visitor: <span id="latest-animal-name">Animal</span></h2>
+            <p id="latest-animal-time"></p>
+            <p id="latest-animal-confidence"></p>
+            <p><a href="bird_image_viewer.html">View all wildlife detections &#8594;</a></p>
+        </div>
+    </article>
 
     <!-- PLOTS -->
-    <div class="section-bar">&#9670; Weather Plots</div>
+    <div class="section-bar" id="weather-plots">&#9670; Weather Plots</div>
     <div class="plots-section">
-        <img src="/bigdata/weather_station/hourly_timelapse.gif" alt="Hourly timelapse (may take a moment to load)">
-        <img src="/bigdata/weather_station/weather_plot_1_hour.png" alt="Weather Plot &mdash; Last Hour">
-        <img src="/bigdata/weather_station/weather_plot_1_day.png" alt="Weather Plot &mdash; Last Day">
-        <img src="/bigdata/weather_station/weather_plot_1_week.png" alt="Weather Plot &mdash; Last Week">
-        <img src="/bigdata/weather_station/weather_plot_1_month.png" alt="Weather Plot &mdash; Last Month">
-        <img src="/bigdata/weather_station/images/latest.jpg" alt="Latest Camera Image">
-        <img src="/bigdata/weather_station/daily_timelapse.gif" alt="Daily timelapse (may take a moment to load)">
+        <p class="plot-hint">Click any image to view it at full size.</p>
+        <figure class="plot-card featured"><a href="/bigdata/weather_station/hourly_timelapse.gif" target="_blank"><img src="/bigdata/weather_station/hourly_timelapse.gif" alt="Hourly weather-camera timelapse"></a><figcaption>Hourly Camera Timelapse</figcaption></figure>
+        <figure class="plot-card"><a href="/bigdata/weather_station/weather_plot_1_hour.png" target="_blank"><img src="/bigdata/weather_station/weather_plot_1_hour.png" alt="Weather plots for the last hour"></a><figcaption>Last Hour</figcaption></figure>
+        <figure class="plot-card"><a href="/bigdata/weather_station/weather_plot_1_day.png" target="_blank"><img src="/bigdata/weather_station/weather_plot_1_day.png" alt="Weather plots for the last day"></a><figcaption>Last Day</figcaption></figure>
+        <figure class="plot-card"><a href="/bigdata/weather_station/weather_plot_1_week.png" target="_blank"><img src="/bigdata/weather_station/weather_plot_1_week.png" alt="Weather plots for the last week"></a><figcaption>Last Week</figcaption></figure>
+        <figure class="plot-card"><a href="/bigdata/weather_station/weather_plot_1_month.png" target="_blank"><img src="/bigdata/weather_station/weather_plot_1_month.png" alt="Weather plots for the last month"></a><figcaption>Last Month</figcaption></figure>
+        <figure class="plot-card"><a href="/bigdata/weather_station/images/latest.jpg" target="_blank"><img src="/bigdata/weather_station/images/latest.jpg" alt="Latest weather-station camera image"></a><figcaption>Latest Camera Image</figcaption></figure>
+        <figure class="plot-card"><a href="/bigdata/weather_station/daily_timelapse.gif" target="_blank"><img src="/bigdata/weather_station/daily_timelapse.gif" alt="Daily weather-camera timelapse"></a><figcaption>Daily Camera Timelapse</figcaption></figure>
     </div>
 
     <!-- ABOUT THE SETUP -->
-    <div class="section-bar">&#9670; About This Setup</div>
+    <div class="section-bar" id="setup">&#9670; About This Setup</div>
     <div class="info-card">
         <p>A Raspberry Pi records the local weather conditions and camera images:</p>
         <ul>
@@ -352,22 +544,28 @@
     </div>
 
     <!-- LINKS -->
-    <div class="section-bar">&#9670; Data &amp; Images</div>
+    <div class="section-bar" id="data">&#9670; Data &amp; Images</div>
     <div class="links-row">
         <a href="/bigdata/weather_station/all_data.csv" download>&#8595; Download all weather data (.csv)</a>
         <a href="image_viewer.html" target="_blank">&#9654; View all images</a>
-        <a href="bird_image_viewer.html" target="_blank">&#9654; View bird images</a>
+        <a href="bird_image_viewer.html" target="_blank">&#9654; View wildlife detections</a>
         <a href="training.html" target="_blank">&#9654; View training stats</a>
     </div>
 
     <!-- SUBSCRIBE -->
-    <div class="section-bar">&#9670; Subscribe</div>
+    <div class="section-bar" id="subscribe">&#9670; Subscribe</div>
     <div class="subscribe-block">
         <h3>Subscribe to weather updates</h3>
         <form action="subscribe.php" method="post">
             <input type="email" name="email" required placeholder="Your email address">
             <button type="submit">Subscribe</button>
         </form>
+    </div>
+
+    <!-- RASPBERRY PI HEALTH -->
+    <div class="section-bar" id="pi-health">&#9670; Raspberry Pi Health</div>
+    <div class="plots-section">
+        <figure class="plot-card featured"><a href="/bigdata/weather_station/pi_system_stats_plot.png" target="_blank"><img src="/bigdata/weather_station/pi_system_stats_plot.png" alt="Raspberry Pi CPU usage, memory usage, CPU temperature, disk space, and throttling history"></a><figcaption>CPU, Memory, Temperature, Disk Space &amp; Throttling History</figcaption></figure>
     </div>
 
     <div class="page-footer">
