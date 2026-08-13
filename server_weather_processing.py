@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""Process and plot Tempestas weather data using the current canonical schema.
+"""Process and plot Tempestas weather-station data v2.
 
-This version intentionally treats unavailable sensors as unavailable.  It does
-not manufacture pressure/light measurements, does not apply the old Wyoming
-calibration offset, and displays UTC-stored timestamps in America/New_York.
+The canonical v2 stream stores DHT22 and BME680 temperature/humidity
+independently, a candidate equal-weight combination of each pair, BME680
+pressure/gas/altitude, and camera metadata. ``Ambient_*`` remains the current
+station-level/default value chosen by the Pi.
+
+Unavailable sensors remain unavailable: this processor never fabricates
+environmental measurements, and failure of one sensor does not stop products
+from the others being updated. UTC measurements are displayed in
+America/New_York.
 """
 
 import csv
@@ -42,7 +48,7 @@ BASE_DIR = "/media/bigdata/weather_station"
 MASTER_FILE = os.path.join(BASE_DIR, "all_data.csv")
 MASTER_FILE_JSON = os.path.join(BASE_DIR, "all_data.json")
 PREDICT_FILE = os.path.join(BASE_DIR, "predictions.csv")
-MODEL_FILE = os.path.join(BASE_DIR, "weather_model_v2.pth")
+MODEL_FILE = os.path.join(BASE_DIR, "weather_model_v2_bme680.pth")
 IMAGE_DIR = os.path.join(BASE_DIR, "images")
 HOURLY_GIF = os.path.join(BASE_DIR, "hourly_timelapse.gif")
 DAILY_GIF = os.path.join(BASE_DIR, "daily_timelapse.gif")
@@ -134,22 +140,32 @@ def _sensor_current(
 def check_sensor_validity(df: pd.DataFrame) -> dict:
     flags = {
         "ambient_temp": _sensor_current(df, "Ambient_Temperature_C"),
+        "ambient_humidity": _sensor_current(df, "Ambient_Humidity_percent"),
+        "combined_temp": _sensor_current(df, "Combined_Temperature_C"),
+        "combined_humidity": _sensor_current(df, "Combined_Humidity_percent"),
         "dht22_temp": _sensor_current(df, "DHT22_Temperature_C"),
         "dht22_humidity": _sensor_current(df, "DHT22_Humidity_percent"),
-        "pressure_temp": _sensor_current(df, "PressureSensor_Temperature_C"),
-        "pressure": _sensor_current(df, "Pressure_hPa"),
-        "pressure_altitude": _sensor_current(df, "Pressure_Altitude_m"),
-        # Camera captures are much less frequent than weather rows.
+        "bme680_temp": _sensor_current(df, "BME680_Temperature_C"),
+        "bme680_humidity": _sensor_current(df, "BME680_Humidity_percent"),
+        "bme680_pressure": _sensor_current(df, "BME680_Pressure_hPa"),
+        "bme680_gas": _sensor_current(df, "BME680_Gas_Resistance_ohm"),
+        "bme680_altitude": _sensor_current(df, "BME680_Altitude_m"),
         "camera_lux": _sensor_current(
             df, "Camera_Lux", max_age="15min", window="30min", min_count=1
         ),
     }
+    flags["ambient"] = flags["ambient_temp"] and flags["ambient_humidity"]
     flags["dht22"] = flags["dht22_temp"] and flags["dht22_humidity"]
+    flags["bme680"] = (
+        flags["bme680_temp"]
+        and flags["bme680_humidity"]
+        and flags["bme680_pressure"]
+    )
 
     for name, okay in flags.items():
-        if name == "dht22":
+        if name in {"ambient", "dht22", "bme680"}:
             continue
-        logging.info("Sensor %-18s %s", name, "available" if okay else "unavailable")
+        logging.info("Sensor %-20s %s", name, "available" if okay else "unavailable")
     return flags
 
 
@@ -228,20 +244,27 @@ def derive_metrics(data: pd.DataFrame, flags: dict) -> pd.DataFrame:
     data = data.copy()
     data.replace([np.inf, -np.inf], np.nan, inplace=True)
 
-    for col in [
+    smooth_columns = [
         "Ambient_Temperature_C",
+        "Ambient_Humidity_percent",
+        "Combined_Temperature_C",
+        "Combined_Humidity_percent",
         "DHT22_Temperature_C",
-        "PressureSensor_Temperature_C",
         "DHT22_Humidity_percent",
-        "Pressure_hPa",
+        "BME680_Temperature_C",
+        "BME680_Humidity_percent",
+        "BME680_Pressure_hPa",
+        "BME680_Gas_Resistance_ohm",
+        "BME680_Altitude_m",
         "Camera_Lux",
-    ]:
+    ]
+    for col in smooth_columns:
         data[f"{col}_Smoothed"] = _time_rolling_mean(
-            data, col, HUMIDITY_SMOOTH_WINDOW if "Humidity" in col else SMOOTH_WINDOW
+            data,
+            col,
+            HUMIDITY_SMOOTH_WINDOW if "Humidity" in col else SMOOTH_WINDOW,
         )
 
-    # Camera-reported lux is cached on the Pi.  Do not display it once its age
-    # says the value is stale.
     camera_age = pd.to_numeric(data["Camera_Lux_Age_s"], errors="coerce")
     data["Camera_Lux_Recent"] = data["Camera_Lux"].where(
         camera_age.notna() & (camera_age <= MAX_CAMERA_LUX_AGE_S)
@@ -252,42 +275,33 @@ def derive_metrics(data: pd.DataFrame, flags: dict) -> pd.DataFrame:
         SMOOTH_WINDOW,
     )
 
-    # Ambient_Temperature_C is the station-level value selected/combined on the
-    # Pi.  Preserve the individual sensor temperatures separately for audit and
-    # future sensor-comparison plots.
     data["Median_Temperature_C"] = data["Ambient_Temperature_C"]
     data["Median_Temperature_F"] = data["Ambient_Temperature_C"] * 9.0 / 5.0 + 32.0
 
-    if flags["dht22"]:
-        data["Dew_Point_C"] = calculate_dew_point(
-            data["Ambient_Temperature_C"].to_numpy(),
-            data["DHT22_Humidity_percent"].to_numpy(),
-        )
-        data["Heat_Index_C"] = calculate_heat_index_c(
-            data["Ambient_Temperature_C"].to_numpy(),
-            data["DHT22_Humidity_percent"].to_numpy(),
-        )
-    else:
-        data["Dew_Point_C"] = np.nan
-        data["Heat_Index_C"] = np.nan
+    # Derived quantities always follow the station-level Ambient_* policy. If
+    # Combined_* is promoted on the Pi later, no server-side redesign is needed.
+    data["Dew_Point_C"] = calculate_dew_point(
+        data["Ambient_Temperature_C"].to_numpy(),
+        data["Ambient_Humidity_percent"].to_numpy(),
+    )
+    data["Heat_Index_C"] = calculate_heat_index_c(
+        data["Ambient_Temperature_C"].to_numpy(),
+        data["Ambient_Humidity_percent"].to_numpy(),
+    )
+    data["Specific_Humidity_gkg"] = calculate_specific_humidity_gkg(
+        data["Ambient_Temperature_C"].to_numpy(),
+        data["Ambient_Humidity_percent"].to_numpy(),
+        data["BME680_Pressure_hPa"].to_numpy(),
+    )
 
-    data["Dew_Point_C_Smoothed"] = _time_rolling_mean(data, "Dew_Point_C", SMOOTH_WINDOW)
-    data["Heat_Index_C_Smoothed"] = _time_rolling_mean(data, "Heat_Index_C", SMOOTH_WINDOW)
-
-    if flags["dht22_humidity"] and flags["pressure"]:
-        data["Specific_Humidity_gkg"] = calculate_specific_humidity_gkg(
-            data["Ambient_Temperature_C"].to_numpy(),
-            data["DHT22_Humidity_percent"].to_numpy(),
-            data["Pressure_hPa"].to_numpy(),
-        )
-    else:
-        data["Specific_Humidity_gkg"] = np.nan
-
+    data["Dew_Point_C_Smoothed"] = _time_rolling_mean(
+        data, "Dew_Point_C", SMOOTH_WINDOW
+    )
+    data["Heat_Index_C_Smoothed"] = _time_rolling_mean(
+        data, "Heat_Index_C", SMOOTH_WINDOW
+    )
     data["Specific_Humidity_gkg_Smoothed"] = _time_rolling_mean(
         data, "Specific_Humidity_gkg", SMOOTH_WINDOW
-    )
-    data["Temperature_Sensor_Difference_C"] = (
-        data["PressureSensor_Temperature_C"] - data["DHT22_Temperature_C"]
     )
     return data
 
@@ -353,120 +367,207 @@ def generate_plots(data, predict_data, output_path, title, out_of_date_flag, fla
         return
 
     data = data.copy()
-    span = max(data["Timestamp"].iloc[-1] - data["Timestamp"].iloc[0], pd.Timedelta(minutes=1))
-    prediction = _prepare_prediction_overlay(predict_data, data["Timestamp"].iloc[-1])
+    span = max(
+        data["Timestamp"].iloc[-1] - data["Timestamp"].iloc[0],
+        pd.Timedelta(minutes=1),
+    )
+    prediction = _prepare_prediction_overlay(
+        predict_data, data["Timestamp"].iloc[-1]
+    )
+
+    def has_data(column):
+        return column in data.columns and pd.to_numeric(
+            data[column], errors="coerce"
+        ).notna().any()
 
     fig, axs = plt.subplots(4, 2, figsize=(15, 15))
 
-    # 1. Temperature
+    # 1. Temperature: DHT22, BME680, and their candidate combination.
     ax = axs[0, 0]
-    ax.plot(data["Timestamp"], data["Ambient_Temperature_C"], alpha=0.25, label="Ambient raw")
-    ax.plot(data["Timestamp"], data["Ambient_Temperature_C_Smoothed"], linewidth=2, label="Ambient")
-    if flags["dht22_temp"]:
-        ax.plot(data["Timestamp"], data["DHT22_Temperature_C_Smoothed"], alpha=0.8, label="DHT22")
-    if flags["pressure_temp"]:
-        ax.plot(data["Timestamp"], data["PressureSensor_Temperature_C_Smoothed"], alpha=0.8, label="Pressure sensor")
-    if not prediction.empty:
-        # Join forecast visually to the latest measured ambient temperature.
-        p = pd.concat(
-            [
-                pd.DataFrame({
-                    "Timestamp": [data["Timestamp"].iloc[-1]],
-                    "Predicted_Temperature": [data["Ambient_Temperature_C"].iloc[-1]],
-                }),
-                prediction,
-            ],
-            ignore_index=True,
+    plotted = False
+    if has_data("DHT22_Temperature_C_Smoothed"):
+        ax.plot(
+            data["Timestamp"], data["DHT22_Temperature_C_Smoothed"],
+            linewidth=1.6, alpha=0.85, label="DHT22",
         )
-        ax.plot(p["Timestamp"], p["Predicted_Temperature"], linestyle="--", label="LSTM forecast")
-    ax.set_title("Temperature")
-    ax.set_ylabel("°C")
-    ax.legend(loc="best")
-    ax.grid(alpha=0.3)
-    _safe_set_ylim(ax, [data["Ambient_Temperature_C"], data["DHT22_Temperature_C"], data["PressureSensor_Temperature_C"]])
+        plotted = True
+    if has_data("BME680_Temperature_C_Smoothed"):
+        ax.plot(
+            data["Timestamp"], data["BME680_Temperature_C_Smoothed"],
+            linewidth=1.6, alpha=0.85, label="BME680",
+        )
+        plotted = True
+    if has_data("Combined_Temperature_C_Smoothed"):
+        ax.plot(
+            data["Timestamp"], data["Combined_Temperature_C_Smoothed"],
+            linewidth=2.6, label="Combined candidate",
+        )
+        plotted = True
 
-    # 2. Relative humidity
+    if not prediction.empty and has_data("Ambient_Temperature_C"):
+        valid_temp = pd.to_numeric(
+            data["Ambient_Temperature_C"], errors="coerce"
+        ).dropna()
+        if not valid_temp.empty:
+            idx = valid_temp.index[-1]
+            p = pd.concat(
+                [
+                    pd.DataFrame({
+                        "Timestamp": [data.loc[idx, "Timestamp"]],
+                        "Predicted_Temperature": [valid_temp.iloc[-1]],
+                    }),
+                    prediction,
+                ],
+                ignore_index=True,
+            )
+            ax.plot(
+                p["Timestamp"], p["Predicted_Temperature"],
+                linestyle="--", label="LSTM forecast",
+            )
+            plotted = True
+
+    if plotted:
+        ax.set_ylabel("°C")
+        ax.legend(loc="best")
+        _safe_set_ylim(
+            ax,
+            [
+                data["DHT22_Temperature_C"],
+                data["BME680_Temperature_C"],
+                data["Combined_Temperature_C"],
+            ],
+        )
+    else:
+        _dead_sensor_notice(ax, "No temperature measurements")
+    ax.set_title("Temperature — DHT22, BME680 and Combined")
+    ax.grid(alpha=0.3)
+
+    # 2. Relative humidity: DHT22, BME680, and their candidate combination.
     ax = axs[0, 1]
-    if flags["dht22_humidity"]:
-        ax.plot(data["Timestamp"], data["DHT22_Humidity_percent"], alpha=0.2)
-        ax.plot(data["Timestamp"], data["DHT22_Humidity_percent_Smoothed"], linewidth=2, label="DHT22 RH")
+    plotted = False
+    if has_data("DHT22_Humidity_percent_Smoothed"):
+        ax.plot(
+            data["Timestamp"], data["DHT22_Humidity_percent_Smoothed"],
+            linewidth=1.6, alpha=0.85, label="DHT22",
+        )
+        plotted = True
+    if has_data("BME680_Humidity_percent_Smoothed"):
+        ax.plot(
+            data["Timestamp"], data["BME680_Humidity_percent_Smoothed"],
+            linewidth=1.6, alpha=0.85, label="BME680",
+        )
+        plotted = True
+    if has_data("Combined_Humidity_percent_Smoothed"):
+        ax.plot(
+            data["Timestamp"], data["Combined_Humidity_percent_Smoothed"],
+            linewidth=2.6, label="Combined candidate",
+        )
+        plotted = True
+    if plotted:
         ax.set_ylim(0, 100)
         ax.set_ylabel("% RH")
         ax.legend(loc="best")
     else:
-        _dead_sensor_notice(ax, "Humidity sensor unavailable")
-    ax.set_title("Relative Humidity")
+        _dead_sensor_notice(ax, "No humidity measurements")
+    ax.set_title("Relative Humidity — DHT22, BME680 and Combined")
     ax.grid(alpha=0.3)
 
-    # 3. Pressure
+    # 3. BME680 pressure.
     ax = axs[1, 0]
-    if flags["pressure"]:
-        ax.plot(data["Timestamp"], data["Pressure_hPa"], alpha=0.25)
-        ax.plot(data["Timestamp"], data["Pressure_hPa_Smoothed"], linewidth=2, label="Measured pressure")
+    if has_data("BME680_Pressure_hPa_Smoothed"):
+        ax.plot(
+            data["Timestamp"], data["BME680_Pressure_hPa"],
+            alpha=0.20, label="Raw",
+        )
+        ax.plot(
+            data["Timestamp"], data["BME680_Pressure_hPa_Smoothed"],
+            linewidth=2, label="BME680",
+        )
         ax.set_ylabel("hPa")
         ax.legend(loc="best")
-        _safe_set_ylim(ax, [data["Pressure_hPa"]], minimum_pad=0.5)
+        _safe_set_ylim(ax, [data["BME680_Pressure_hPa"]], minimum_pad=0.5)
     else:
-        _dead_sensor_notice(ax, "Pressure sensor not installed")
+        _dead_sensor_notice(ax, "BME680 pressure unavailable")
     ax.set_title("Barometric Pressure")
     ax.grid(alpha=0.3)
 
-    # 4. Camera lux metadata
+    # 4. Camera lux metadata.
     ax = axs[1, 1]
     if data["Camera_Lux_Recent"].notna().any():
         ax.plot(data["Timestamp"], data["Camera_Lux_Recent"], alpha=0.25)
-        ax.plot(data["Timestamp"], data["Camera_Lux_Recent_Smoothed"], linewidth=2, label="Camera metadata")
+        ax.plot(
+            data["Timestamp"], data["Camera_Lux_Recent_Smoothed"],
+            linewidth=2, label="Camera metadata",
+        )
         ax.set_ylabel("Lux (camera metadata)")
         ax.legend(loc="best")
-        ax.set_yscale("log" if (data["Camera_Lux_Recent"].dropna() > 0).all() else "linear")
+        positive = data["Camera_Lux_Recent"].dropna()
+        if len(positive) and (positive > 0).all():
+            ax.set_yscale("log")
     else:
         _dead_sensor_notice(ax, "No recent camera lux metadata")
     ax.set_title("Camera-Reported Light Level")
     ax.grid(alpha=0.3)
 
-    # 5. Heat index
+    # 5. Heat index.
     ax = axs[2, 0]
-    if flags["dht22"]:
-        ax.plot(data["Timestamp"], data["Heat_Index_C_Smoothed"], label="Heat index / air temperature")
+    if has_data("Heat_Index_C_Smoothed"):
+        ax.plot(
+            data["Timestamp"], data["Heat_Index_C_Smoothed"],
+            label="Heat index / air temperature",
+        )
         ax.set_ylabel("°C")
         ax.legend(loc="best")
     else:
-        _dead_sensor_notice(ax, "Heat index unavailable without temperature + RH")
+        _dead_sensor_notice(ax, "Heat index unavailable")
     ax.set_title("Heat Index")
     ax.grid(alpha=0.3)
 
-    # 6. Dew point
+    # 6. Dew point.
     ax = axs[2, 1]
-    if flags["dht22"]:
-        ax.plot(data["Timestamp"], data["Dew_Point_C_Smoothed"], label="Dew point")
+    if has_data("Dew_Point_C_Smoothed"):
+        ax.plot(
+            data["Timestamp"], data["Dew_Point_C_Smoothed"],
+            label="Dew point",
+        )
         ax.set_ylabel("°C")
         ax.legend(loc="best")
     else:
-        _dead_sensor_notice(ax, "Dew point unavailable without temperature + RH")
+        _dead_sensor_notice(ax, "Dew point unavailable")
     ax.set_title("Dew Point")
     ax.grid(alpha=0.3)
 
-    # 7. Specific humidity -- only physically computed when pressure exists.
+    # 7. Specific humidity from station Ambient_* + measured BME680 pressure.
     ax = axs[3, 0]
-    if data["Specific_Humidity_gkg"].notna().any():
-        ax.plot(data["Timestamp"], data["Specific_Humidity_gkg_Smoothed"], label="Specific humidity")
+    if has_data("Specific_Humidity_gkg_Smoothed"):
+        ax.plot(
+            data["Timestamp"], data["Specific_Humidity_gkg_Smoothed"],
+            label="Specific humidity",
+        )
         ax.set_ylabel("g/kg")
         ax.legend(loc="best")
     else:
-        _dead_sensor_notice(ax, "Specific humidity requires measured pressure")
+        _dead_sensor_notice(ax, "Specific humidity unavailable")
     ax.set_title("Specific Humidity")
     ax.grid(alpha=0.3)
 
-    # 8. Independent temperature-sensor comparison for future pressure sensor.
+    # 8. Raw BME680 gas-sensor resistance. Do not present this as VOC
+    # concentration/AQI without a separate calibration/model.
     ax = axs[3, 1]
-    if data["Temperature_Sensor_Difference_C"].notna().any():
-        ax.axhline(0, linewidth=1, alpha=0.5)
-        ax.plot(data["Timestamp"], data["Temperature_Sensor_Difference_C"], label="Pressure sensor − DHT22")
-        ax.set_ylabel("ΔT (°C)")
+    if has_data("BME680_Gas_Resistance_ohm_Smoothed"):
+        gas_kohm = pd.to_numeric(
+            data["BME680_Gas_Resistance_ohm_Smoothed"], errors="coerce"
+        ) / 1000.0
+        ax.plot(
+            data["Timestamp"], gas_kohm,
+            linewidth=2, label="BME680 gas resistance",
+        )
+        ax.set_ylabel("Resistance (kΩ)")
         ax.legend(loc="best")
+        _safe_set_ylim(ax, [gas_kohm], minimum_pad=0.2)
     else:
-        _dead_sensor_notice(ax, "Second temperature sensor not installed")
-    ax.set_title("Temperature Sensor Agreement")
+        _dead_sensor_notice(ax, "BME680 gas measurement unavailable")
+    ax.set_title("BME680 Gas Resistance")
     ax.grid(alpha=0.3)
 
     for ax in axs.flat:
@@ -474,17 +575,14 @@ def generate_plots(data, predict_data, output_path, title, out_of_date_flag, fla
             _configure_time_axis(ax, span.to_pytimedelta())
 
     latest_local = data["Timestamp"].iloc[-1].tz_convert(LOCAL_TZ)
-    fig.suptitle(f"{title}\nLatest: {latest_local:%Y-%m-%d %H:%M:%S %Z}", fontsize=14)
+    fig.suptitle(
+        f"{title}\nLatest: {latest_local:%Y-%m-%d %H:%M:%S %Z}",
+        fontsize=14,
+    )
     if out_of_date_flag:
         fig.text(
-            0.5,
-            0.5,
-            "DATA STREAM STALE",
-            ha="center",
-            va="center",
-            fontsize=48,
-            alpha=0.12,
-            rotation=30,
+            0.5, 0.5, "DATA STREAM STALE",
+            ha="center", va="center", fontsize=48, alpha=0.12, rotation=30,
         )
     fig.tight_layout(rect=(0, 0, 1, 0.96))
     tmp = f"{output_path}.tmp.png"
@@ -496,24 +594,44 @@ def generate_plots(data, predict_data, output_path, title, out_of_date_flag, fla
 def generate_summary_plot(data, output_path, flags):
     if data.empty:
         return
-    recent = data[data["Timestamp"] >= data["Timestamp"].max() - pd.Timedelta(hours=24)].copy()
+    recent = data[
+        data["Timestamp"] >= data["Timestamp"].max() - pd.Timedelta(hours=24)
+    ].copy()
     fig, ax_t = plt.subplots(figsize=(10, 6))
-    ax_t.plot(recent["Timestamp"], recent["Ambient_Temperature_C_Smoothed"], label="Ambient temperature")
+    lines, labels = [], []
+
+    if recent["Ambient_Temperature_C_Smoothed"].notna().any():
+        line = ax_t.plot(
+            recent["Timestamp"], recent["Ambient_Temperature_C_Smoothed"],
+            label="Ambient temperature",
+        )
+        lines += line
+        labels += [item.get_label() for item in line]
     ax_t.set_ylabel("Temperature (°C)")
     ax_t.grid(alpha=0.3)
-    lines, labels = ax_t.get_legend_handles_labels()
 
-    if flags["dht22_humidity"]:
+    if recent["Ambient_Humidity_percent_Smoothed"].notna().any():
         ax_h = ax_t.twinx()
-        ax_h.plot(recent["Timestamp"], recent["DHT22_Humidity_percent_Smoothed"], label="Humidity", alpha=0.75)
+        line = ax_h.plot(
+            recent["Timestamp"], recent["Ambient_Humidity_percent_Smoothed"],
+            label="Ambient humidity", alpha=0.75,
+        )
+        lines += line
+        labels += [item.get_label() for item in line]
         ax_h.set_ylabel("Relative humidity (%)")
         ax_h.set_ylim(0, 100)
-        l2, lab2 = ax_h.get_legend_handles_labels()
-        lines += l2
-        labels += lab2
 
-    ax_t.legend(lines, labels, loc="best")
-    ax_t.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d\n%H:%M", tz=LOCAL_TZ))
+    if lines:
+        ax_t.legend(lines, labels, loc="best")
+    else:
+        ax_t.text(
+            0.5, 0.5, "No recent temperature/humidity data",
+            transform=ax_t.transAxes, ha="center", va="center",
+        )
+
+    ax_t.xaxis.set_major_formatter(
+        mdates.DateFormatter("%m-%d\n%H:%M", tz=LOCAL_TZ)
+    )
     ax_t.tick_params(axis="x", rotation=30)
     ax_t.set_title("Tempestas — latest 24 hours")
     fig.tight_layout()
@@ -531,11 +649,24 @@ def save_last_minute_averages(data, predict_data, output_file, flags):
     if recent.empty:
         recent = data.tail(1)
 
-    temp_c = pd.to_numeric(recent["Ambient_Temperature_C"], errors="coerce").mean()
+    temp_c = pd.to_numeric(
+        recent["Ambient_Temperature_C"], errors="coerce"
+    ).mean()
     temp_f = temp_c * 9 / 5 + 32 if np.isfinite(temp_c) else np.nan
-    humidity = recent["DHT22_Humidity_percent"].mean() if flags["dht22_humidity"] else np.nan
-    pressure = recent["Pressure_hPa"].mean() if flags["pressure"] else np.nan
-    lux = recent["Camera_Lux_Recent"].mean() if recent["Camera_Lux_Recent"].notna().any() else np.nan
+    humidity = pd.to_numeric(
+        recent["Ambient_Humidity_percent"], errors="coerce"
+    ).mean()
+    pressure = pd.to_numeric(
+        recent["BME680_Pressure_hPa"], errors="coerce"
+    ).mean()
+    gas_ohm = pd.to_numeric(
+        recent["BME680_Gas_Resistance_ohm"], errors="coerce"
+    ).mean()
+    lux = (
+        recent["Camera_Lux_Recent"].mean()
+        if recent["Camera_Lux_Recent"].notna().any()
+        else np.nan
+    )
 
     forecast = _prepare_prediction_overlay(predict_data, latest)
     pred = forecast["Predicted_Temperature"].iloc[0] if not forecast.empty else np.nan
@@ -543,13 +674,36 @@ def save_last_minute_averages(data, predict_data, output_file, flags):
 
     rows = [
         ("Updated", local_time.strftime("%Y-%m-%d %H:%M:%S %Z")),
-        ("Temperature", f"{temp_c:.2f} °C / {temp_f:.2f} °F" if np.isfinite(temp_c) else "Unavailable — DHT22 offline"),
-        ("Humidity", f"{humidity:.1f} %" if np.isfinite(humidity) else "Unavailable"),
-        ("Pressure", f"{pressure:.2f} hPa" if np.isfinite(pressure) else "Unavailable"),
-        ("Camera light", f"{lux:.1f} lx" if np.isfinite(lux) else "Unavailable"),
-        ("Next forecast", f"{pred:.2f} °C" if np.isfinite(pred) else "Not yet available"),
+        (
+            "Temperature",
+            f"{temp_c:.2f} °C / {temp_f:.2f} °F"
+            if np.isfinite(temp_c) else "Unavailable",
+        ),
+        (
+            "Humidity",
+            f"{humidity:.1f} %" if np.isfinite(humidity) else "Unavailable",
+        ),
+        (
+            "Pressure",
+            f"{pressure:.2f} hPa" if np.isfinite(pressure) else "Unavailable",
+        ),
+        (
+            "BME680 gas resistance",
+            f"{gas_ohm / 1000.0:.2f} kΩ"
+            if np.isfinite(gas_ohm) else "Unavailable",
+        ),
+        (
+            "Camera light",
+            f"{lux:.1f} lx" if np.isfinite(lux) else "Unavailable",
+        ),
+        (
+            "Next forecast",
+            f"{pred:.2f} °C" if np.isfinite(pred) else "Not yet available",
+        ),
     ]
-    table_rows = "\n".join(f"<tr><th>{k}</th><td>{v}</td></tr>" for k, v in rows)
+    table_rows = "\n".join(
+        f"<tr><th>{k}</th><td>{v}</td></tr>" for k, v in rows
+    )
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -636,18 +790,38 @@ def _generate_gif_with_plot(image_dir, output_gif, data, lookback, frame_duratio
 
         subset = data_window[data_window["Timestamp"] <= ts]
         fig, ax = plt.subplots(figsize=(8, 3))
-        if not subset.empty:
-            ax.plot(subset["Timestamp"], subset["Ambient_Temperature_C_Smoothed"], label="Temperature")
+        plotted = False
+        if (
+            not subset.empty
+            and subset["Ambient_Temperature_C_Smoothed"].notna().any()
+        ):
+            ax.plot(
+                subset["Timestamp"], subset["Ambient_Temperature_C_Smoothed"],
+                label="Temperature",
+            )
             ax.set_ylabel("°C")
-            if subset["DHT22_Humidity_percent_Smoothed"].notna().any():
-                ax2 = ax.twinx()
-                ax2.plot(subset["Timestamp"], subset["DHT22_Humidity_percent_Smoothed"], alpha=0.6, label="RH")
-                ax2.set_ylabel("% RH")
-                ax2.set_ylim(0, 100)
-            ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=LOCAL_TZ))
-            ax.grid(alpha=0.3)
-        else:
-            ax.text(0.5, 0.5, "No weather data", transform=ax.transAxes, ha="center", va="center")
+            plotted = True
+
+        if (
+            not subset.empty
+            and subset["Ambient_Humidity_percent_Smoothed"].notna().any()
+        ):
+            ax2 = ax.twinx()
+            ax2.plot(
+                subset["Timestamp"], subset["Ambient_Humidity_percent_Smoothed"],
+                alpha=0.6, label="RH",
+            )
+            ax2.set_ylabel("% RH")
+            ax2.set_ylim(0, 100)
+            plotted = True
+
+        if not plotted:
+            ax.text(
+                0.5, 0.5, "No weather data",
+                transform=ax.transAxes, ha="center", va="center",
+            )
+        ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M", tz=LOCAL_TZ))
+        ax.grid(alpha=0.3)
         fig.tight_layout()
         buf = BytesIO()
         fig.savefig(buf, format="png", dpi=80)
@@ -781,7 +955,7 @@ def prepare_forecast(master_file: str) -> pd.DataFrame:
             num_layers=2,
             batch_size=128,
             seq_length=FORECAST_SEQUENCE_MINUTES,
-            feature_cols=["Ambient_Temperature_C", "DHT22_Humidity_percent"],
+            feature_cols=["Ambient_Temperature_C", "Ambient_Humidity_percent"],
             target_col="Ambient_Temperature_C",
         )
         recent = forecaster.load_master_data()
@@ -882,46 +1056,20 @@ def main():
 
     flags = check_sensor_validity(master_data)
 
-    # Derivation is NaN-safe, so keep the server products alive even if an
-    # environmental sensor is temporarily unavailable.
+    # Derivation is row-wise/NaN-safe. A failed DHT22 must not stop BME680 gas
+    # or pressure products, and a failed BME680 must not stop DHT22 products.
     master_data = derive_metrics(master_data, flags)
     generate_json_from_data(master_data[WEATHER_COLUMNS], MASTER_FILE_JSON)
 
-    if not flags["ambient_temp"]:
-        logging.warning(
-            "Ambient temperature is currently unavailable; preserving the last "
-            "valid weather plots while continuing ingestion and health products"
+    if flags["ambient_temp"] and flags["ambient_humidity"]:
+        predict_data = prepare_forecast(MASTER_FILE)
+    else:
+        logging.info(
+            "Forecast disabled while current Ambient temperature/humidity is unavailable"
         )
-        empty_predictions = pd.DataFrame(
+        predict_data = pd.DataFrame(
             columns=["Timestamp", "Predicted_Temperature"]
         )
-        try:
-            save_last_minute_averages(
-                master_data,
-                empty_predictions,
-                os.path.join(BASE_DIR, "small_summary.html"),
-                flags,
-            )
-        except Exception as exc:
-            logging.warning("Could not update degraded weather summary: %s", exc)
-        try:
-            save_latest_copy(IMAGE_DIR)
-        except Exception as exc:
-            logging.warning("save_latest_copy failed during degraded mode: %s", exc)
-        try:
-            plot_system_stats()
-        except Exception as exc:
-            logging.warning("plot_system_stats failed during degraded mode: %s", exc)
-        try:
-            plot_pi_system_stats()
-        except Exception as exc:
-            logging.warning("plot_pi_system_stats failed during degraded mode: %s", exc)
-        logging.info(
-            "Processing cycle completed in degraded mode; waiting for fresh ambient temperature data"
-        )
-        return 0
-
-    predict_data = prepare_forecast(MASTER_FILE)
 
     now_utc = pd.Timestamp.now(tz="UTC")
     max_timestamp = master_data["Timestamp"].max()
@@ -935,8 +1083,12 @@ def main():
     except Exception as exc:
         logging.warning("save_latest_copy failed: %s", exc)
 
+    # Always regenerate every panel from whatever measurements are genuinely
+    # available. One sensor outage is a degraded channel, not a processor crash.
     for label, delta in TIME_SPANS.items():
-        subset = master_data[master_data["Timestamp"] >= max_timestamp - pd.Timedelta(delta)].copy()
+        subset = master_data[
+            master_data["Timestamp"] >= max_timestamp - pd.Timedelta(delta)
+        ].copy()
         generate_plots(
             subset,
             predict_data,
@@ -946,7 +1098,9 @@ def main():
             flags,
         )
 
-    generate_summary_plot(master_data, os.path.join(BASE_DIR, "summary_plot.png"), flags)
+    generate_summary_plot(
+        master_data, os.path.join(BASE_DIR, "summary_plot.png"), flags
+    )
     save_last_minute_averages(
         master_data,
         predict_data,
@@ -969,6 +1123,7 @@ def main():
     run_bird_detection()
     logging.info("Weather processing complete")
     return 0
+
 
 
 if __name__ == "__main__":
