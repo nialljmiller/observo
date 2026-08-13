@@ -922,23 +922,80 @@ def plot_pi_system_stats(csv_file=None, output_image=None):
     if not required.issubset(df.columns):
         return
     df["Timestamp"] = pd.to_datetime(df["Timestamp"], errors="coerce", utc=True)
-    df = df.dropna(subset=["Timestamp"]).sort_values("Timestamp").tail(4000)
+    df = df.dropna(subset=["Timestamp"]).sort_values("Timestamp").tail(20000)
     if df.empty:
         return
-    fig, ax1 = plt.subplots(figsize=(12, 5))
-    ax1.plot(df["Timestamp"], pd.to_numeric(df["CPU_Usage_percent"], errors="coerce"), label="CPU usage")
-    ax1.plot(df["Timestamp"], pd.to_numeric(df["Memory_Usage_percent"], errors="coerce"), label="Memory usage")
-    ax1.set_ylim(0, 100)
-    ax1.set_ylabel("Usage (%)")
-    ax1.legend(loc="upper left")
-    ax1.grid(alpha=0.3)
-    ax2 = ax1.twinx()
-    ax2.plot(df["Timestamp"], pd.to_numeric(df["CPU_Temperature_C"], errors="coerce"), label="Pi CPU temp", alpha=0.75)
-    ax2.set_ylabel("CPU temperature (°C)")
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M", tz=LOCAL_TZ))
-    ax1.tick_params(axis="x", rotation=30)
-    ax1.set_title("Raspberry Pi system statistics")
+    cpu_color = "#1f77b4"
+    memory_color = "#2ca02c"
+    temp_color = "#d62728"
+    disk_color = "#9467bd"
+
+    fig, usage_ax = plt.subplots(figsize=(15, 6))
+    cpu = pd.to_numeric(df["CPU_Usage_percent"], errors="coerce")
+    memory = pd.to_numeric(df["Memory_Usage_percent"], errors="coerce")
+    usage_ax.plot(df["Timestamp"], cpu, color=cpu_color, linewidth=1.2, label="CPU usage")
+    usage_ax.plot(df["Timestamp"], memory, color=memory_color, linewidth=1.6, label="Memory usage")
+    usage_ax.set_ylim(0, 100)
+    usage_ax.set_ylabel("CPU / memory usage (%)", color=cpu_color)
+    usage_ax.tick_params(axis="y", colors=cpu_color)
+    usage_ax.grid(alpha=0.25)
+
+    temp_ax = usage_ax.twinx()
+    cpu_temp = pd.to_numeric(df["CPU_Temperature_C"], errors="coerce")
+    temp_ax.plot(
+        df["Timestamp"], cpu_temp, color=temp_color, linewidth=1.5,
+        alpha=0.85, label="CPU temperature",
+    )
+    temp_ax.set_ylabel("CPU temperature (°C)", color=temp_color)
+    temp_ax.tick_params(axis="y", colors=temp_color)
+
+    # A second, outward-offset right axis keeps disk capacity in its native GB
+    # without flattening the percentage and temperature series.
+    if "Disk_Free_GB" in df.columns:
+        disk = pd.to_numeric(df["Disk_Free_GB"], errors="coerce")
+        if disk.notna().any():
+            disk_ax = usage_ax.twinx()
+            disk_ax.spines["right"].set_position(("outward", 62))
+            disk_ax.plot(
+                df["Timestamp"], disk, color=disk_color, linewidth=1.5,
+                linestyle="--", label="Disk free",
+            )
+            disk_ax.set_ylabel("Disk free (GB)", color=disk_color)
+            disk_ax.tick_params(axis="y", colors=disk_color)
+
+    # Show any active or historical Pi under-voltage/throttling state at the
+    # top edge of the percentage scale, where it remains visible at a glance.
+    if "Pi_Throttled_Hex" in df.columns:
+        def throttled(value):
+            try:
+                return int(str(value).strip(), 0) != 0
+            except (TypeError, ValueError):
+                return False
+
+        throttle_mask = df["Pi_Throttled_Hex"].map(throttled)
+        if throttle_mask.any():
+            usage_ax.scatter(
+                df.loc[throttle_mask, "Timestamp"],
+                np.full(throttle_mask.sum(), 98),
+                color="#ff7f0e", marker="x", s=28, zorder=5,
+                label="Throttle / under-voltage flag",
+            )
+
+    usage_ax.xaxis.set_major_formatter(mdates.DateFormatter("%m-%d %H:%M", tz=LOCAL_TZ))
+    usage_ax.tick_params(axis="x", rotation=30)
+    usage_ax.set_xlabel(f"Time ({LOCAL_TZ.key})")
+    usage_ax.set_title("Raspberry Pi Health")
+
+    handles = []
+    labels = []
+    for axis in fig.axes:
+        axis_handles, axis_labels = axis.get_legend_handles_labels()
+        handles.extend(axis_handles)
+        labels.extend(axis_labels)
+    usage_ax.legend(handles, labels, loc="upper left", ncol=2, framealpha=0.9)
+
     fig.tight_layout()
+    fig.subplots_adjust(right=0.86)
     tmp = f"{output_image}.tmp.png"
     fig.savefig(tmp, dpi=120)
     plt.close(fig)
@@ -1012,7 +1069,7 @@ def prepare_forecast(master_file: str) -> pd.DataFrame:
         return empty
 
 
-def run_bird_detection():
+def run_wildlife_detection():
     if bird_detection is None:
         logging.warning("Bird detection unavailable: %s", _BIRD_IMPORT_ERROR)
         return
@@ -1020,14 +1077,14 @@ def run_bird_detection():
         bird_detection.run_detection_pipeline(
             image_dir=IMAGE_DIR,
             output_dir=os.path.join(IMAGE_DIR, "birds"),
-            confidence_threshold=0.35,
+            confidence_threshold=0.20,
             log_file=os.path.join(IMAGE_DIR, "birds", "processed_images.json"),
-            hours_back=2,
+            hours_back=3,
             target_classes=[
-                "bird", "squirrel", "cat", "rabbit", "fox", "deer", "raccoon",
-                "skunk", "coyote", "mouse", "vole", "chipmunk", "prairie dog",
-                "badger", "weasel", "hawk", "owl", "magpie", "crow", "raven",
-                "turkey", "woodpecker",
+                "animal", "bird", "deer", "squirrel", "cat", "dog", "rabbit",
+                "fox", "raccoon", "opossum", "skunk", "coyote", "mouse",
+                "rat", "vole", "chipmunk", "groundhog", "badger", "weasel",
+                "hawk", "owl", "crow", "raven", "turkey", "woodpecker",
             ],
         )
     except Exception as exc:
@@ -1120,7 +1177,7 @@ def main():
     except Exception as exc:
         logging.warning("System-stat plotting failed: %s", exc)
 
-    run_bird_detection()
+    run_wildlife_detection()
     logging.info("Weather processing complete")
     return 0
 
