@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
-"""Robust ingestion for the Observo weather station.
+"""Robust ingestion for Tempestas/Observo weather-station data v2.
 
-This is the clean DHT22-era ingestion path.  It intentionally does not migrate
-or preserve the old BMP/DHT11/BH1750 schema.
+This is the clean BME680 + DHT22 ingestion path. It intentionally does not
+migrate or preserve any earlier weather schema.
 
 Design goals
 ------------
 * Never truncate or delete an incoming upload before it is validated.
-* Refuse partial/schema-mismatched CSVs rather than quietly corrupting master
-  data.
+* Require the exact v2 schema before touching the master data.
 * Tolerate the Pi re-uploading the same local history by de-duplicating on UTC
   timestamp.
-* Keep pressure columns in the schema even while no pressure sensor is present.
+* Retain every DHT22 and BME680 raw environmental measurement.
 * Ingest Pi health telemetry (including ``Pi_Throttled_Hex``) separately.
-* Replace old-schema master files with a clean new-schema data set.
 * Use an inter-process lock and atomic master-file replacement so readers never
   see a partially rewritten master CSV.
 """
@@ -431,7 +429,7 @@ def main() -> int:
             LOG.warning("Another server_weather_ingest process is active; exiting cleanly")
             return 0
 
-        # New deployment: old master schemas are intentionally discarded.
+        # Version-2 clean deployment: incompatible master schemas are intentionally discarded.
         ensure_clean_master(WEATHER_MASTER_FILE, WEATHER_COLUMNS)
         ensure_clean_master(SYSTEM_MASTER_FILE, SYSTEM_COLUMNS)
 
